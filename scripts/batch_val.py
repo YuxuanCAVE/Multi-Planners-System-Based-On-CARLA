@@ -9,8 +9,6 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 
-
-
 from benchmark_metrics import compute_run_metrics, write_comparison_table
 
 

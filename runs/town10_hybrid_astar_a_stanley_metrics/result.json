@@ -1,0 +1,19 @@
+{
+  "reason": "collision",
+  "steps": 449,
+  "sim_time_s": 22.450000000000003,
+  "wall_time_s": 3.578031539916992,
+  "metrics_summary": {
+    "num_samples": 450,
+    "cte_rmse_m": 1.0708046184879556,
+    "cte_max_abs_m": 2.991961177212577,
+    "heading_rmse_rad": 0.35589870226995085,
+    "heading_max_abs_rad": 1.1927056051119846,
+    "speed_err_rmse_mps": 1.1722983944928869,
+    "d_steer_rmse": 0.16145310909743565,
+    "steer_saturation_count": 0,
+    "throttle_saturation_count": 0,
+    "brake_saturation_count": 0,
+    "cte_mean_m": -0.03887691458599419
+  }
+}

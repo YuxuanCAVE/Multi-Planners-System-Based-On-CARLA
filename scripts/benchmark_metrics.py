@@ -97,14 +97,79 @@ def compute_run_metrics(run_dir: Path) -> RunMetrics:
 
 
 def write_comparison_table(metrics: List[RunMetrics], output_md: Path) -> None:
-    lines = [
-        "| Planner | Scenario | Success | Sim Time (s) | Collision | Out of Lane | Replan Count | Plan Mean (ms) | Plan P95 (ms) |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-    for m in metrics:
-        lines.append(
-            f"| {m.planner} | {m.scenario} | {int(m.success)} | {m.sim_time_s:.2f} | {int(m.collision)} | {int(m.out_of_lane)} | {m.replan_count} | "
-            f"{'' if m.plan_ms_mean is None else f'{m.plan_ms_mean:.2f}'} | {'' if m.plan_ms_p95 is None else f'{m.plan_ms_p95:.2f}'} |"
+    def fmt_bool(v: bool) -> str:
+        return "1" if v else "0"
+
+    def fmt_float(v: Optional[float], nd: int = 2) -> str:
+        return "—" if v is None else f"{v:.{nd}f}"
+
+    def fmt_int(v: int) -> str:
+        return f"{v:d}"
+
+    def escape_html(s: str) -> str:
+        # minimal HTML escaping
+        return (
+            s.replace("&", "&amp;")
+             .replace("<", "&lt;")
+             .replace(">", "&gt;")
+             .replace('"', "&quot;")
         )
 
-    output_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Optional: shorten very long planner strings for nicer table
+    def planner_display(planner: str) -> str:
+        # e.g., "framework.planning.local.rrt_star:RRTStarPlanner" -> "RRTStarPlanner"
+        if ":" in planner:
+            return planner.split(":")[-1]
+        return planner.split(".")[-1]
+
+    style = """
+<style>
+table.benchmark { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 14px; }
+table.benchmark th, table.benchmark td { border: 1px solid #ddd; padding: 6px 8px; }
+table.benchmark th { background: #f6f6f6; text-align: left; }
+table.benchmark td.num, table.benchmark th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.benchmark tr:nth-child(even) { background: #fcfcfc; }
+</style>
+""".strip()
+
+    header = """
+<table class="benchmark">
+  <thead>
+    <tr>
+      <th>Planner</th>
+      <th>Scenario</th>
+      <th class="num">Success</th>
+      <th class="num">Sim Time (s)</th>
+      <th class="num">Collision</th>
+      <th class="num">Out of Lane</th>
+      <th class="num">Replan Count</th>
+      <th class="num">Plan Mean (ms)</th>
+      <th class="num">Plan P95 (ms)</th>
+    </tr>
+  </thead>
+  <tbody>
+""".rstrip()
+
+    rows_html: List[str] = []
+    for m in metrics:
+        rows_html.append(
+            "    <tr>"
+            f"<td>{escape_html(planner_display(m.planner))}</td>"
+            f"<td>{escape_html(m.scenario)}</td>"
+            f"<td class=\"num\">{fmt_bool(m.success)}</td>"
+            f"<td class=\"num\">{fmt_float(m.sim_time_s, 2)}</td>"
+            f"<td class=\"num\">{fmt_bool(m.collision)}</td>"
+            f"<td class=\"num\">{fmt_bool(m.out_of_lane)}</td>"
+            f"<td class=\"num\">{fmt_int(m.replan_count)}</td>"
+            f"<td class=\"num\">{fmt_float(m.plan_ms_mean, 2)}</td>"
+            f"<td class=\"num\">{fmt_float(m.plan_ms_p95, 2)}</td>"
+            "</tr>"
+        )
+
+    footer = """
+  </tbody>
+</table>
+""".strip()
+
+    html = "\n".join([style, header, *rows_html, footer]) + "\n"
+    output_md.write_text(html, encoding="utf-8")

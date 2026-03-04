@@ -35,7 +35,7 @@ planner:
     target_speed: 5.0
 
     lateral_offsets: [-1.0, -0.5, 0.0, 0.5, 1.0]
-    speed_samples: [2.0, 4.0, 5.0, 6.0]
+    speed_samples: [2.0,3.0, 4.0, 5.0, 6.0]
 
     lateral_ramp_time: 1.0
     max_curvature: 0.35
@@ -75,9 +75,10 @@ controller:
 runner:
   sync: true
   fixed_delta_seconds: 0.05
-  no_rendering_mode: true
+  no_rendering_mode: false
   max_steps: 2000
   debug_draw: false
+  follow_spectator: true
   enable_recorder: true
 
   obstacle_range_m: 60.0

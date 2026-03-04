@@ -11,15 +11,9 @@ from typing import Any, Dict, Optional, Protocol, runtime_checkable
 import carla
 
 from framework.core.types import EgoState, Obstacle, Pose2D, Vec3, WorldModel
-
 from framework.core.types import PlanStatus,PlanResult
-
 from framework.planning.base_planning import BasePlanner
-
-
 from framework.control.pure_pursuit import PurePursuitController
-
-
 from framework.evaluation.recorder import Recorder as RichRecorder
 
 # metrics
@@ -51,6 +45,7 @@ class RunnerConfig:
     # loop
     max_steps: int = 4000
     debug_draw: bool = True
+    follow_spectator: bool = True
 
     # recorder
     enable_recorder: bool = True
@@ -169,6 +164,7 @@ class Runner:
             no_rendering_mode=bool(cfg.get("no_rendering_mode", RunnerConfig.no_rendering_mode)),
             max_steps=int(cfg.get("max_steps", RunnerConfig.max_steps)),
             debug_draw=bool(cfg.get("debug_draw", RunnerConfig.debug_draw)),
+            follow_spectator=bool(cfg.get("follow_spectator", RunnerConfig.follow_spectator)),
             enable_recorder=bool(cfg.get("enable_recorder", RunnerConfig.enable_recorder)),
             obstacle_range_m=float(cfg.get("obstacle_range_m", RunnerConfig.obstacle_range_m)),
             max_obstacles=int(cfg.get("max_obstacles", RunnerConfig.max_obstacles)),
@@ -254,7 +250,7 @@ class Runner:
 
                 ego.apply_control(control)
 
-                if self.cfg.debug_draw:
+                if self.cfg.follow_spectator:
                     self._spectator_follow(ego)
 
                 # recorder: be tolerant to recorder implementations that don't accept sensors

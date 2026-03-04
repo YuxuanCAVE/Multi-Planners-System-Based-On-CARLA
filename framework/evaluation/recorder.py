@@ -265,25 +265,7 @@ class Recorder:
                 if k in best:
                     row[f"best_{k}"] = best.get(k)
 
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-        #
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
+
         timing = debug.get("timing")
         if isinstance(timing, dict):
             for k, v in timing.items():
