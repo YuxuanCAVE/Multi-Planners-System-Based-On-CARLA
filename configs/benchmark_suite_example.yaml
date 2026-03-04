@@ -1,0 +1,31 @@
+# One-line usage:
+#   python scripts/batch_val.py --suite configs/benchmark_suite_example.yaml
+
+base_config: configs/town10_hybrid_astar_stanley_metrics_a.yaml
+run_script: scripts/run.py
+runs_dir: runs
+output: runs/benchmark_comparison.md
+
+# Applied to all planners
+global_set:
+  - runner.max_steps=1500
+  - runner.debug_draw=false
+
+# Planners to compare (same scenario, same initial condition)
+planners:
+  - label: hybrid_astar_map
+    name: framework.planning.local.hybrid_astar_a:HybridAStarMapPlanner
+    set:
+      - planner.config.target_speed=5.0
+
+  - label: lattice
+    name: framework.planning.local.lattice:LatticePlanner
+    set:
+      - planner.config.target_speed=5.0
+
+  - label: rrt_star
+    name: framework.planning.local.rrt_star:RRTStarPlanner
+    set:
+      - planner.config.target_speed=5.0
+      - planner.config.max_iter=1500
+      - planner.config.max_time_ms=70.0

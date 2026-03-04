@@ -11,7 +11,9 @@ from typing import Any, Dict, Optional, Protocol, runtime_checkable
 import carla
 
 from framework.core.types import EgoState, Obstacle, Pose2D, Vec3, WorldModel
+
 from framework.core.types import PlanStatus,PlanResult
+
 from framework.planning.base_planning import BasePlanner
 
 
@@ -462,6 +464,96 @@ class Runner:
         debug["timing"] = timing
         return replace(plan, debug=debug)
 
+
+    def _attach_plan_timing(self, plan: Any, *, start_t: float) -> Any:
+        plan_ms = (time.perf_counter() - start_t) * 1000.0
+
+        if not isinstance(plan, PlanResult):
+            return plan
+
+        debug = dict(plan.debug) if isinstance(plan.debug, dict) else {}
+        timing = debug.get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+        timing = dict(timing)
+        timing["plan_total_ms"] = float(plan_ms)
+        debug["timing"] = timing
+        return replace(plan, debug=debug)
+
+    def _attach_plan_timing(self, plan: Any, *, start_t: float) -> Any:
+        plan_ms = (time.perf_counter() - start_t) * 1000.0
+
+        if not isinstance(plan, PlanResult):
+            return plan
+
+        debug = dict(plan.debug) if isinstance(plan.debug, dict) else {}
+        timing = debug.get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+        timing = dict(timing)
+        timing["plan_total_ms"] = float(plan_ms)
+        debug["timing"] = timing
+        return replace(plan, debug=debug)
+
+    def _attach_plan_timing(self, plan: Any, *, start_t: float) -> Any:
+        plan_ms = (time.perf_counter() - start_t) * 1000.0
+
+        if not isinstance(plan, PlanResult):
+            return plan
+
+        debug = dict(plan.debug) if isinstance(plan.debug, dict) else {}
+        timing = debug.get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+        timing = dict(timing)
+        timing["plan_total_ms"] = float(plan_ms)
+        debug["timing"] = timing
+        return replace(plan, debug=debug)
+
+    def _attach_plan_timing(self, plan: Any, *, start_t: float) -> Any:
+        plan_ms = (time.perf_counter() - start_t) * 1000.0
+
+        if not isinstance(plan, PlanResult):
+            return plan
+
+        debug = dict(plan.debug) if isinstance(plan.debug, dict) else {}
+        timing = debug.get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+        timing = dict(timing)
+        timing["plan_total_ms"] = float(plan_ms)
+        debug["timing"] = timing
+        return replace(plan, debug=debug)
+
+    def _attach_plan_timing(self, plan: Any, *, start_t: float) -> Any:
+        plan_ms = (time.perf_counter() - start_t) * 1000.0
+
+        if not isinstance(plan, PlanResult):
+            return plan
+
+        debug = dict(plan.debug) if isinstance(plan.debug, dict) else {}
+        timing = debug.get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+        timing = dict(timing)
+        timing["plan_total_ms"] = float(plan_ms)
+        debug["timing"] = timing
+        return replace(plan, debug=debug)
+
+    def _attach_plan_timing(self, plan: Any, *, start_t: float) -> Any:
+        plan_ms = (time.perf_counter() - start_t) * 1000.0
+
+        if not isinstance(plan, PlanResult):
+            return plan
+
+        debug = dict(plan.debug) if isinstance(plan.debug, dict) else {}
+        timing = debug.get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+        timing = dict(timing)
+        timing["plan_total_ms"] = float(plan_ms)
+        debug["timing"] = timing
+        return replace(plan, debug=debug)
 
     def _is_plan_usable(self, plan: Any) -> bool:
         if getattr(plan, "status", None) != PlanStatus.OK:

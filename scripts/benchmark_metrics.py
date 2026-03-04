@@ -106,4 +106,5 @@ def write_comparison_table(metrics: List[RunMetrics], output_md: Path) -> None:
             f"| {m.planner} | {m.scenario} | {int(m.success)} | {m.sim_time_s:.2f} | {int(m.collision)} | {int(m.out_of_lane)} | {m.replan_count} | "
             f"{'' if m.plan_ms_mean is None else f'{m.plan_ms_mean:.2f}'} | {'' if m.plan_ms_p95 is None else f'{m.plan_ms_p95:.2f}'} |"
         )
+
     output_md.write_text("\n".join(lines) + "\n", encoding="utf-8")

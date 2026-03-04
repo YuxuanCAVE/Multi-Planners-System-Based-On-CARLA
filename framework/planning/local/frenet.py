@@ -529,7 +529,9 @@ class FrenetPlanner(BasePlanner):
         collision = False
         ego_r = self.cfg.ego_radius + self.cfg.min_clearance
 
+
         # collision (circle-circle)
+
         pts = traj.points
         if pts and world.obstacles:
             xs = [p.x for p in pts]
@@ -538,7 +540,9 @@ class FrenetPlanner(BasePlanner):
             min_y, max_y = min(ys), max(ys)
 
             inflated_obstacles = []
+
             #这里加入obstacles的坐标，并取圆
+
             for ob in world.obstacles:
                 r_sum = ego_r + ob.radius
                 ox = ob.position.x
@@ -560,12 +564,23 @@ class FrenetPlanner(BasePlanner):
                     d = _hypot(dx, dy) - r_sum
                     if d < min_dist:
                         min_dist = d
-                
+                if collision:
+                    break
+
+                if collision:
+                    break
+
+                if collision:
+                    break
+
+                if collision:
+                    break
+
 
         # kinematics checks
         max_kappa = 0.0
         max_yaw_rate = 0.0
-        
+
         dt = float(traj.dt)
 
         for i in range(2, len(pts)):

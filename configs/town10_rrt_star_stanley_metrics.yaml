@@ -19,7 +19,7 @@ scenario:
 
     route:
       source: "grp"
-      sampling_resolution_m: 0.5
+      sampling_resolution_m: 1.0
 
     actors:
       - type: "vehicle"
@@ -28,40 +28,26 @@ scenario:
         autopilot: true
 
 planner:
-  name: "framework.planning.local.hybrid_astar_a:HybridAStarMapPlanner"
+  name: "framework.planning.local.rrt_star:RRTStarPlanner"
   config:
     dt: 0.1
     horizon_s: 5.0
     target_speed: 5.0
 
-    # grid
+    lookahead_m: 25.0
+
     grid_size_m: 60.0
-    grid_res_m: 0.4
+    grid_res_m: 0.3
     inflation_m: 1.0
 
-    # goal
-    lookahead_m: 25.0
-    nearest_search_window: 600
-
-    # kinematics / primitives
-    wheelbase_m: 2.8
-    steer_max_deg: 30.0
-    steer_samples: 5
-    sim_speed_mps: 5.0
-    primitive_dt: 0.1
-    primitive_steps: 6
-    heading_bins: 72
-
-    # search budget
-    max_expansions: 6000
-    max_time_ms: 40.0
-
-    # optional: prefer staying near route (0 = off)
-    w_ref: 2.0
-
-    # drivable-mask cache
-    mask_update_every_n_ticks: 10
-    mask_update_min_move_m: 1.0
+    max_iter: 1200
+    max_time_ms: 50.0
+    step_size_m: 2.0
+    goal_sample_rate: 0.20
+    goal_tolerance_m: 2.0
+    rewire_radius_m: 4.0
+    edge_sample_res_m: 0.5
+    rng_seed: 0
 
 controller:
   name: "framework.control.stanley:StanleyController"
@@ -100,7 +86,7 @@ runner:
 
   recorder:
     save_dir: "runs"
-    run_name: "town10_hybrid_astar_a_stanley_metrics"
+    run_name: null
     save_csv: true
     save_json: true
 
