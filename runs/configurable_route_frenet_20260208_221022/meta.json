@@ -1,0 +1,155 @@
+{
+  "scenario": "configurable_route",
+  "planner": "frenet",
+  "map": "Carla/Maps/Town10HD",
+  "sync": true,
+  "fixed_delta_seconds": 0.05,
+  "no_rendering_mode": false,
+  "runner_cfg": {
+    "host": "127.0.0.1",
+    "port": 2000,
+    "timeout_s": 60.0,
+    "sync": true,
+    "fixed_delta_seconds": 0.05,
+    "no_rendering_mode": false,
+    "max_steps": 2000,
+    "debug_draw": true,
+    "enable_recorder": true,
+    "obstacle_range_m": 35.0,
+    "max_obstacles": 20,
+    "ignore_static_parked": false
+  },
+  "config": {
+    "carla": {
+      "host": "127.0.0.1",
+      "port": 2000,
+      "timeout_s": 60.0
+    },
+    "scenario": {
+      "name": "framework.scenarios.scenario01:ConfigurableRouteScenario",
+      "config": {
+        "id": "scenario01",
+        "map_name": "Town10HD",
+        "weather": "ClearNoon",
+        "ego_blueprint": "vehicle.tesla.model3",
+        "ego_spawn": {
+          "spawn_point_index": 0
+        },
+        "goal": {
+          "spawn_point_index": 20
+        },
+        "goal_radius_m": 4.0,
+        "timeout_s": 240.0,
+        "route": {
+          "source": "grp",
+          "sampling_resolution_m": 2.0
+        },
+        "actors": [
+          {
+            "type": "vehicle",
+            "blueprint": "vehicle.audi.tt",
+            "spawn": {
+              "spawn_point_index": 10
+            },
+            "autopilot": true
+          }
+        ]
+      }
+    },
+    "planner": {
+      "name": "framework.planning.local.frenet:FrenetPlanner",
+      "config": {
+        "dt": 0.1,
+        "horizon_s": 5.0,
+        "target_speed": 5.0,
+        "lateral_offsets": [
+          -1.5,
+          -1.0,
+          -0.75,
+          -0.5,
+          -0.25,
+          0.0,
+          0.25,
+          0.5,
+          0.75,
+          1.0,
+          1.5
+        ],
+        "speed_samples": [
+          0.0,
+          2.0,
+          4.0,
+          6.0,
+          8.0,
+          10.0,
+          12.0
+        ],
+        "ego_radius": 1.0,
+        "min_clearance": 0.1,
+        "max_curvature": 0.35,
+        "max_yaw_rate": 2.6,
+        "w_offset": 1.0,
+        "w_speed": 0.5,
+        "w_jerk": 0.2,
+        "w_curvature": 2.0,
+        "w_collision": 1000.0,
+        "prefer_center": true,
+        "stop_at_route_end": true,
+        "proj_win_back": 20,
+        "proj_win_fwd": 80,
+        "proj_heading_gate_deg": 90.0,
+        "max_s_backtrack": 2.0,
+        "max_s_jump": 30.0,
+        "lateral_ramp_time": 1.0
+      }
+    },
+    "controller": {
+      "name": "framework.control.pure_pursuit:PurePursuitController",
+      "config": {
+        "target_speed": 5.0,
+        "enable_longitudinal": true,
+        "wheel_base": 2.7,
+        "lookahead_base": 4.0,
+        "lookahead_gain": 0.35,
+        "min_lookahead": 2.0,
+        "max_lookahead": 20.0,
+        "max_steer_deg": 35.0,
+        "kp_speed": 0.4,
+        "ki_speed": 0.0,
+        "kd_speed": 0.0,
+        "max_throttle": 0.6,
+        "max_brake": 0.6
+      }
+    },
+    "runner": {
+      "sync": true,
+      "fixed_delta_seconds": 0.05,
+      "no_rendering_mode": false,
+      "max_steps": 2000,
+      "debug_draw": true,
+      "enable_recorder": true,
+      "obstacle_range_m": 35.0,
+      "max_obstacles": 20,
+      "ignore_static_parked": false,
+      "recorder": {
+        "save_dir": "runs",
+        "run_name": null,
+        "save_csv": true,
+        "save_json": true,
+        "record_world_obstacles": true,
+        "max_obstacles": 20,
+        "record_trajectory": "summary",
+        "max_traj_points": 200,
+        "plot_ego_xy": true,
+        "plot_speed": true,
+        "plot_controls": true,
+        "plot_plan_summary": true,
+        "flush_every_n": 0
+      },
+      "host": "127.0.0.1",
+      "port": 2000,
+      "timeout_s": 60.0
+    }
+  },
+  "sensor_cfg": null
+}

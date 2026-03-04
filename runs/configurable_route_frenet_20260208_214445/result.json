@@ -1,0 +1,6 @@
+{
+  "reason": "max_steps_reached",
+  "steps": 1000,
+  "sim_time_s": 50.0,
+  "wall_time_s": 23.009291172027588
+}

@@ -1,0 +1,39 @@
+carla:
+  host: "127.0.0.1"
+  port: 2000
+  timeout_s: 10.0
+
+scenario:
+  name: "town10_simple_route"
+  config:
+    map_name: "Town10HD"
+    spawn_index: 0
+    goal_index: 40
+    goal_radius_m: 14.0
+
+planner:
+  name: "dummy"
+  config:
+    dt: 0.1
+    horizon_steps: 40
+    target_speed: 10.0
+
+controller:
+  name: "pure_pursuit"
+  config:
+    target_speed: 3.0
+    enable_longitudinal: true
+    wheel_base: 2.7
+    lookahead_base: 4.0
+    lookahead_gain: 0.35
+    max_steer_deg: 35.0
+    kp_speed: 0.4
+    max_throttle: 0.6
+    max_brake: 0.6
+
+runner:
+  sync: true
+  fixed_delta_seconds: 0.05
+  no_rendering_mode: false
+  max_steps: 4000
+  debug_draw: true
