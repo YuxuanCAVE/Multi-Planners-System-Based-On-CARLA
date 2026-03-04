@@ -265,6 +265,13 @@ class Recorder:
                 if k in best:
                     row[f"best_{k}"] = best.get(k)
 
+        #
+        timing = debug.get("timing")
+        if isinstance(timing, dict):
+            for k, v in timing.items():
+                if isinstance(v, (int, float)):
+                    row[f"timing_{k}"] = float(v)
+
         # Shallow flatten of simple scalar debug values
         for k, v in debug.items():
             if k in ("best",):

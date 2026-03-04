@@ -530,21 +530,42 @@ class FrenetPlanner(BasePlanner):
         ego_r = self.cfg.ego_radius + self.cfg.min_clearance
 
         # collision (circle-circle)
-        for p in traj.points:
+        pts = traj.points
+        if pts and world.obstacles:
+            xs = [p.x for p in pts]
+            ys = [p.y for p in pts]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+
+            inflated_obstacles = []
+            #这里加入obstacles的坐标，并取圆
             for ob in world.obstacles:
-                d = _hypot(p.x - ob.position.x, p.y - ob.position.y) - (ego_r + ob.radius)
-                if d < min_dist:
-                    min_dist = d
-                if d <= 0.0:
-                    collision = True
-                    break
-            if collision:
-                break
+                r_sum = ego_r + ob.radius
+                ox = ob.position.x
+                oy = ob.position.y
+                if ox < (min_x - r_sum) or ox > (max_x + r_sum) or oy < (min_y - r_sum) or oy > (max_y + r_sum):
+                    continue
+                inflated_obstacles.append((ox, oy, r_sum, r_sum * r_sum))
+
+            for p in pts:
+                for ox, oy, r_sum, r2 in inflated_obstacles:
+                    dx = p.x - ox
+                    dy = p.y - oy
+                    d2 = dx * dx + dy * dy
+                    if d2 <= r2:
+                        min_dist = min(min_dist, _hypot(dx, dy) - r_sum)
+                        collision = True
+                        break
+
+                    d = _hypot(dx, dy) - r_sum
+                    if d < min_dist:
+                        min_dist = d
+                
 
         # kinematics checks
         max_kappa = 0.0
         max_yaw_rate = 0.0
-        pts = traj.points
+        
         dt = float(traj.dt)
 
         for i in range(2, len(pts)):

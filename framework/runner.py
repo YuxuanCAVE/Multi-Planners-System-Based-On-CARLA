@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import time
+from dataclasses import replace
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol, runtime_checkable
@@ -10,7 +11,7 @@ from typing import Any, Dict, Optional, Protocol, runtime_checkable
 import carla
 
 from framework.core.types import EgoState, Obstacle, Pose2D, Vec3, WorldModel
-from framework.core.types import PlanStatus
+from framework.core.types import PlanStatus,PlanResult
 from framework.planning.base_planning import BasePlanner
 
 
@@ -238,7 +239,9 @@ class Runner:
                     except Exception:
                         sensors = None
 
+                plan_start = time.perf_counter()
                 plan = self.planner.plan(ego=ego_state, world=world_model, t=float(t_sim))
+                plan = self._attach_plan_timing(plan, start_t=plan_start)
 
                 control = self._safe_stop_control()
                 if self._is_plan_usable(plan):
@@ -443,6 +446,22 @@ class Runner:
     def _safe_stop_control(self) -> carla.VehicleControl:
         # always return a NEW object per tick
         return carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
+    
+    def _attach_plan_timing(self, plan: Any, *, start_t: float) -> Any:
+        plan_ms = (time.perf_counter() - start_t) * 1000.0
+
+        if not isinstance(plan, PlanResult):
+            return plan
+
+        debug = dict(plan.debug) if isinstance(plan.debug, dict) else {}
+        timing = debug.get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+        timing = dict(timing)
+        timing["plan_total_ms"] = float(plan_ms)
+        debug["timing"] = timing
+        return replace(plan, debug=debug)
+
 
     def _is_plan_usable(self, plan: Any) -> bool:
         if getattr(plan, "status", None) != PlanStatus.OK:
