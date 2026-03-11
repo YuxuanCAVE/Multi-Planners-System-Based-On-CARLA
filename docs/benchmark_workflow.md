@@ -59,7 +59,3 @@ python scripts/batch_val.py --suite configs/benchmark_suite_example.yaml
 python scripts/batch_val.py --suite configs/benchmark_suite_example.yaml \
   --planner framework.planning.local.frenet:FrenetPlanner
 ```
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs

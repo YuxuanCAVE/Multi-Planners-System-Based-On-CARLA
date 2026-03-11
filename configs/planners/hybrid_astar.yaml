@@ -1,0 +1,27 @@
+name: "framework.planning.local.hybrid_astar:HybridAStarMapPlanner"
+config:
+  dt: 0.1
+  horizon_s: 5.0
+  target_speed: 5.0
+
+  lookahead_m: 25.0
+
+  grid_size_m: 60.0
+  grid_res_m: 0.3
+  inflation_m: 1.0
+
+  wheel_base_m: 2.7
+  steer_max_deg: 35.0
+  steer_samples: 5
+  sim_speed_mps: 5.0
+  primitive_dt: 0.1
+  primitive_steps: 6
+  heading_bins: 72
+
+  max_expansions: 6000
+  max_time_ms: 40.0
+
+  w_ref: 2.0
+
+  mask_update_every_n_ticks: 10
+  mask_update_min_move_m: 1.0

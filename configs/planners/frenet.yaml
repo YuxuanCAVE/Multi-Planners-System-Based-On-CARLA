@@ -1,0 +1,31 @@
+name: "framework.planning.local.frenet:FrenetPlanner"
+config:
+  dt: 0.1
+  horizon_s: 5.0
+  target_speed: 5.0
+
+  lateral_offsets: [-1.5, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.5]
+  speed_samples: [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0]
+
+  ego_radius: 1.0
+  min_clearance: 0.1
+  max_curvature: 0.35
+  max_yaw_rate: 2.6
+
+  w_offset: 1.0
+  w_speed: 0.5
+  w_jerk: 0.2
+  w_curvature: 2.0
+  w_collision: 1000.0
+
+  prefer_center: true
+  stop_at_route_end: true
+
+  proj_win_back: 20
+  proj_win_fwd: 80
+  proj_heading_gate_deg: 90.0
+
+  max_s_backtrack: 2.0
+  max_s_jump: 30.0
+
+  lateral_ramp_time: 1.0

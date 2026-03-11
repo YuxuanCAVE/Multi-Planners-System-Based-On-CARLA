@@ -1,0 +1,160 @@
+{
+  "scenario": "configurable_route",
+  "planner": "lattice",
+  "map": "Carla/Maps/Town10HD",
+  "sync": true,
+  "fixed_delta_seconds": 0.05,
+  "no_rendering_mode": false,
+  "runner_cfg": {
+    "host": "127.0.0.1",
+    "port": 2000,
+    "timeout_s": 60.0,
+    "sync": true,
+    "fixed_delta_seconds": 0.05,
+    "no_rendering_mode": false,
+    "max_steps": 1000,
+    "debug_draw": true,
+    "follow_spectator": true,
+    "enable_recorder": true,
+    "obstacle_range_m": 60.0,
+    "max_obstacles": 60,
+    "ignore_static_parked": false
+  },
+  "config": {
+    "carla": {
+      "host": "127.0.0.1",
+      "port": 2000,
+      "timeout_s": 60.0
+    },
+    "scenario": {
+      "name": "framework.scenarios.scenario01:ConfigurableRouteScenario",
+      "config": {
+        "id": "scenario01",
+        "map_name": "Town10HD",
+        "weather": "ClearNoon",
+        "ego_blueprint": "vehicle.tesla.model3",
+        "ego_spawn": {
+          "spawn_point_index": 0
+        },
+        "goal": {
+          "spawn_point_index": 20
+        },
+        "goal_radius_m": 4.0,
+        "timeout_s": 240.0,
+        "route": {
+          "source": "grp",
+          "sampling_resolution_m": 1.0
+        },
+        "actors": [
+          {
+            "type": "vehicle",
+            "blueprint": "vehicle.audi.tt",
+            "spawn": {
+              "spawn_point_index": 10
+            },
+            "autopilot": true
+          }
+        ]
+      }
+    },
+    "planner": {
+      "name": "framework.planning.local.lattice:LatticePlanner",
+      "config": {
+        "dt": 0.1,
+        "horizon_t": 6.0,
+        "target_speed": 4.0,
+        "lateral_offsets": [
+          -0.8,
+          -0.4,
+          0.0,
+          0.4,
+          0.8
+        ],
+        "speed_samples": [
+          3.5,
+          4.0,
+          4.5,
+          5.0
+        ],
+        "lateral_ramp_time": 3.0,
+        "w_offset": 0.4,
+        "w_speed": 0.5,
+        "w_curvature": 0.2,
+        "w_lateral_accel": 0.05,
+        "w_collision": 1000.0,
+        "w_clearance": 0.05
+      }
+    },
+    "vehicle": {
+      "geometry": {
+        "wheelbase_m": 2.875,
+        "length_m": 4.72,
+        "width_m": 1.85,
+        "front_overhang_m": 0.868,
+        "rear_overhang_m": 0.977
+      },
+      "footprint": {
+        "collision_radius_m": 1.1,
+        "safety_margin_m": 0.2
+      },
+      "limits": {
+        "max_speed_mps": 16.0,
+        "max_accel_mps2": 2.5,
+        "max_decel_mps2": 5.0,
+        "max_steer_deg": 27.0,
+        "max_steer_rate_deg_s": 120.0,
+        "max_lateral_accel_mps2": 4.0
+      }
+    },
+    "controller": {
+      "name": "framework.control.stanley:StanleyController",
+      "config": {
+        "target_speed": 4.0,
+        "enable_longitudinal": true,
+        "wheel_base": 2.875,
+        "max_steer_deg": 27.0,
+        "k_stanley": 0.8,
+        "v_soft": 1.5,
+        "use_lookahead": true,
+        "lookahead_base": 3.0,
+        "lookahead_gain": 0.3,
+        "enable_steer_rate_limit": true,
+        "max_steer_rate_deg_s": 120.0,
+        "kp_speed": 0.3,
+        "max_throttle": 0.5,
+        "max_brake": 0.4
+      }
+    },
+    "runner": {
+      "sync": true,
+      "fixed_delta_seconds": 0.05,
+      "no_rendering_mode": false,
+      "max_steps": 1000,
+      "debug_draw": true,
+      "follow_spectator": true,
+      "enable_recorder": true,
+      "obstacle_range_m": 60.0,
+      "max_obstacles": 60,
+      "ignore_static_parked": false,
+      "recorder": {
+        "save_dir": "runs",
+        "run_name": null,
+        "save_csv": true,
+        "save_json": true,
+        "record_world_obstacles": true,
+        "max_obstacles": 20,
+        "record_trajectory": "summary",
+        "max_traj_points": 200,
+        "plot_ego_xy": true,
+        "plot_speed": true,
+        "plot_controls": true,
+        "plot_plan_summary": true,
+        "flush_every_n": 0
+      },
+      "host": "127.0.0.1",
+      "port": 2000,
+      "timeout_s": 60.0
+    }
+  },
+  "sensor_cfg": null
+}

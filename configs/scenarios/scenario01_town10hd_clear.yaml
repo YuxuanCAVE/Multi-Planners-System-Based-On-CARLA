@@ -1,0 +1,22 @@
+name: "framework.scenarios.scenario01:ConfigurableRouteScenario"
+config:
+  id: "scenario01"
+  map_name: "Town10HD"
+  weather: "ClearNoon"
+
+  ego_blueprint: "vehicle.tesla.model3"
+  ego_spawn: { spawn_point_index: 0 }
+
+  goal: { spawn_point_index: 20 }
+  goal_radius_m: 4.0
+  timeout_s: 240.0
+
+  route:
+    source: "grp"
+    sampling_resolution_m: 1.0
+
+  actors:
+    - type: "vehicle"
+      blueprint: "vehicle.audi.tt"
+      spawn: { spawn_point_index: 10 }
+      autopilot: true

@@ -1,0 +1,21 @@
+name: "framework.control.stanley:StanleyController"
+config:
+  target_speed: 5.0
+  enable_longitudinal: true
+
+  wheel_base: 2.7
+  max_steer_deg: 35.0
+
+  k_stanley: 1.2
+  v_soft: 1.0
+
+  use_lookahead: true
+  lookahead_base: 2.0
+  lookahead_gain: 0.2
+
+  enable_steer_rate_limit: true
+  max_steer_rate_deg_s: 120.0
+
+  kp_speed: 0.4
+  max_throttle: 0.6
+  max_brake: 0.6

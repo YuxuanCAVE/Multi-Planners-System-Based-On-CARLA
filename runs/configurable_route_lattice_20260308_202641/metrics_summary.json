@@ -1,0 +1,13 @@
+{
+  "num_samples": 1000,
+  "cte_rmse_m": 0.0023264699708620694,
+  "cte_max_abs_m": 0.0735694152081021,
+  "heading_rmse_rad": 0.00193494696760759,
+  "heading_max_abs_rad": 0.054871665772985016,
+  "speed_err_rmse_mps": 3.594629223101952,
+  "d_steer_rmse": 0.008071274742914157,
+  "steer_saturation_count": 0,
+  "throttle_saturation_count": 0,
+  "brake_saturation_count": 334,
+  "cte_mean_m": 7.460510600644854e-05
+}
