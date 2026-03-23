@@ -207,6 +207,7 @@ class Runner:
                         map_info={
                             "map_name": carla_map.name,
                             "carla_map":carla_map,
+                            "carla_world":self.world,
                             },)
                             
         if self.cfg.debug_draw:

@@ -1,0 +1,147 @@
+carla:
+  host: "127.0.0.1"
+  port: 2000
+  timeout_s: 60.0
+
+scenario:
+  name: "framework.scenarios.lane_following:ConfigurableRouteScenario"
+  config:
+    id: "lane_change_01"
+    map_name: "Town10HD"
+    weather: "ClearNoon"
+
+    ego_blueprint: "vehicle.tesla.model3"
+    ego_spawn: { spawn_point_index: 0 }
+
+    goal: { spawn_point_index: 20 }
+    goal_radius_m: 4.0
+    timeout_s: 240.0
+
+    route:
+      source: "grp"
+      sampling_resolution_m: 0.5
+
+    lead_vehicle:
+      enable: true
+      blueprint: "vehicle.audi.tt"
+      distance_m: 20.0       # 距离 ego 多远生成
+      speed_diff: 70.0       # 越大越慢（TrafficManager）
+
+    actors: []   # 清空，避免干扰
+
+planner:
+  name: "framework.planning.local.hybrid_astar:HybridAStarMapPlanner"
+  config:
+    dt: 0.1
+    horizon_s: 5.0
+    target_speed: 5.0
+
+    static_map_res_m: 0.5
+    static_map_margin_m: 30.0
+
+    grid_size_m: 60.0
+    local_patch_size_x_m: 60.0
+    local_patch_size_y_m: 60.0
+    actor_filter_radius_m: 45.0
+
+    inflation_m: 0.3
+
+    lookahead_m: 12.0
+    nearest_search_window: 600
+    goal_tol_xy_m: 2.0
+    goal_tol_yaw_deg: 20.0
+
+    wheelbase_m: 2.875
+    steer_max_deg: 30.0
+    steer_samples: 5
+    sim_speed_mps: 5.0
+    primitive_dt: 0.1
+    primitive_steps: 4
+    heading_bins: 72
+
+    max_expansions: 6000
+    max_time_ms: 60.0
+
+    w_ref: 2.0
+
+    ego_wheelbase_m: 2.875
+    ego_length_m: 4.72
+    ego_width_m: 1.85
+    ego_front_overhang_m: 0.868
+    ego_rear_overhang_m: 0.977
+
+    circle_sample_radial_step_m: 0.45
+
+    debug_draw_two_circles: true
+
+    ego_circle_radius_scale: 0.9
+    ego_circle_center_scale: 1.0
+    ego_safety_margin_m: 0.02
+
+controller:
+  name: "framework.control.stanley:StanleyController"
+  config:
+    target_speed: 5.0
+    enable_longitudinal: true
+
+    wheel_base: 2.7
+    max_steer_deg: 35.0
+
+    k_stanley: 1.2
+    v_soft: 1.0
+
+    use_lookahead: true
+    lookahead_base: 2.0
+    lookahead_gain: 0.2
+
+    enable_steer_rate_limit: true
+    max_steer_rate_deg_s: 120.0
+
+    kp_speed: 0.4
+    max_throttle: 0.6
+    max_brake: 0.6
+
+runner:
+  sync: true
+  fixed_delta_seconds: 0.05
+  no_rendering_mode: false
+  max_steps: 2000
+  debug_draw: true
+  enable_recorder: true
+
+  obstacle_range_m: 60.0
+  max_obstacles: 60
+  ignore_static_parked: false
+
+  recorder:
+    save_dir: "runs"
+    run_name: "lane_change_hybrid_astar_stanley"
+    save_csv: true
+    save_json: true
+
+    record_world_obstacles: true
+    max_obstacles: 20
+
+    record_trajectory: "summary"
+    max_traj_points: 200
+
+    plot_ego_xy: true
+    plot_speed: true
+    plot_controls: true
+    plot_plan_summary: true
+
+    flush_every_n: 0
+
+  metrics:
+    enabled: true
+
+    use_lookahead: true
+    lookahead_base: 2.0
+    lookahead_gain: 0.2
+
+    use_traj_speed_ref: false
+
+    save_csv: true
+    save_json: true
+    plot_errors: true
+    plot_controls: true

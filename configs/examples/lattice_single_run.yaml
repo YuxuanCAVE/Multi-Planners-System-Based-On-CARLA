@@ -8,7 +8,7 @@
 #   - configs/runners/single_run.yaml
 #
 # Run:
-#   python scripts/run.py --config configs/examples/lattice_single_run.yaml
+#   python3 scripts/run.py --config configs/examples/lattice_single_run.yaml
 
 carla:
   host: "127.0.0.1"

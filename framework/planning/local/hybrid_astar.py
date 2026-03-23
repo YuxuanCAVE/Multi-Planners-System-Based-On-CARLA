@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from framework.planning.base_planning import BasePlanner
+from framework.planning.mapping import OccupancyMapProvider, LocalOccPatch
 from framework.core.types import (
     EgoState,
     WorldModel,
@@ -18,7 +19,6 @@ from framework.core.types import (
     TrajectoryPoint,
     Pose2D,
 )
-
 from framework.control.vehicle.kinematics import bicycle_rollout, wrap_pi
 
 
@@ -51,59 +51,6 @@ def point_to_segment_dist2(px: float, py: float, ax: float, ay: float, bx: float
     return dist2(px, py, cx, cy)
 
 
-class OccGrid:
-    """Ego-centered occupancy grid in world coordinates."""
-    def __init__(self, *, ego_x: float, ego_y: float, size_m: float, res_m: float):
-        self.size_m = float(size_m)
-        self.res_m = float(res_m)
-        self.w = int(math.ceil(self.size_m / self.res_m))
-        self.h = int(math.ceil(self.size_m / self.res_m))
-        half = 0.5 * self.size_m
-        self.min_x = float(ego_x) - half
-        self.min_y = float(ego_y) - half
-        self.occ = [[False] * self.w for _ in range(self.h)]
-
-    def ij_to_world(self, i: int, j: int) -> Tuple[float, float]:
-        x = self.min_x + (j + 0.5) * self.res_m
-        y = self.min_y + (i + 0.5) * self.res_m
-        return x, y
-
-    def world_to_ij(self, x: float, y: float) -> Optional[Tuple[int, int]]:
-        i = int((y - self.min_y) / self.res_m)
-        j = int((x - self.min_x) / self.res_m)
-        if 0 <= i < self.h and 0 <= j < self.w:
-            return i, j
-        return None
-
-    def is_occupied(self, x: float, y: float) -> bool:
-        ij = self.world_to_ij(x, y)
-        if ij is None:
-            return True
-        i, j = ij
-        return self.occ[i][j]
-
-    def set_occupied_disc(self, x: float, y: float, r: float) -> None:
-        center = self.world_to_ij(x, y)
-        if center is None:
-            return
-        ci, cj = center
-        ri = int(math.ceil(r / self.res_m))
-        r2 = r * r
-        for di in range(-ri, ri + 1):
-            ii = ci + di
-            if not (0 <= ii < self.h):
-                continue
-            dy = di * self.res_m
-            row = self.occ[ii]
-            for dj in range(-ri, ri + 1):
-                jj = cj + dj
-                if not (0 <= jj < self.w):
-                    continue
-                dx = dj * self.res_m
-                if dx * dx + dy * dy <= r2:
-                    row[jj] = True
-
-
 @dataclass
 class Node:
     x: float
@@ -119,42 +66,45 @@ class Node:
 class HybridAStarMapPlanner(BasePlanner):
     """
     Minimal Hybrid A* local planner.
-    Hard constraint: drivable area from CARLA map (Driving lane), else occupied.
-    Dynamic obstacles are added on top.
+
+    Static drivable area comes from OccupancyMapProvider's cached/static map.
+    Dynamic obstacles are overlaid into the local patch each planning tick.
     """
     name: str = "hybrid_astar_map"
 
     def reset(self, *, route: Route, map_info: Dict[str, Any]) -> None:
         self._route = route
         self._carla_map = (map_info or {}).get("carla_map", None)
+        self._carla_world = (map_info or {}).get("carla_world", None)
         self._last_nearest_idx = 0
 
-        #添加缓存成员
-        self._mask_tick: int = 0
-        self._mask_center_xy: Optional[Tuple[float, float]] = None
-        self._mask_grid_params: Optional[Tuple[int, int, float, float, float]] = None  # (w,h,res,min_x,min_y)
-        self._mask_occ: Optional[List[List[bool]]] = None  # True = occupied (non-drivable)
+        static_res_m = float(self.config.get("static_map_res_m", 0.5))
+        static_margin_m = float(self.config.get("static_map_margin_m", 30.0))
+
+        self._occ_provider = OccupancyMapProvider(static_res_m=static_res_m)
+        self._occ_provider.build_static_from_carla_map(
+            carla_map=self._carla_map,
+            route_points=self._route.points,
+            margin_m=static_margin_m,
+            free_space_relax_m=1.0,
+        )
 
     def plan(self, *, ego: EgoState, world: WorldModel, t: float) -> PlanResult:
         cfg = self.config
 
-        if self._carla_map is None:
+        if self._occ_provider is None:
             return PlanResult(
                 status=PlanStatus.FAIL,
                 trajectory=None,
-                debug={"reason": "carla_map_missing_in_map_info"},
+                debug={"reason": "occupancy_provider_not_initialized"},
             )
 
-        # --- config ---
         dt_out = float(cfg.get("dt", 0.1))
         horizon_s = float(cfg.get("horizon_s", 5.0))
         target_speed = float(cfg.get("target_speed", 6.0))
 
         grid_size_m = float(cfg.get("grid_size_m", 60.0))
-        grid_res_m = float(cfg.get("grid_res_m", 0.8))
-
         inflation_m = float(cfg.get("inflation_m", 1.0))
-
         lookahead_m = float(cfg.get("lookahead_m", 25.0))
 
         wheelbase_m = float(cfg.get("wheelbase_m", 2.8))
@@ -165,29 +115,29 @@ class HybridAStarMapPlanner(BasePlanner):
         sim_speed = float(cfg.get("sim_speed_mps", 6.0))
 
         heading_bins = int(cfg.get("heading_bins", 72))
-
         max_expansions = int(cfg.get("max_expansions", 6000))
         max_time_ms = float(cfg.get("max_time_ms", 60.0))
-
-        # soft preference (optional)
         w_ref = float(cfg.get("w_ref", 0.0))
 
-        # --- goal on route ---
+        local_size_x_m = float(cfg.get("local_patch_size_x_m", grid_size_m))
+        local_size_y_m = float(cfg.get("local_patch_size_y_m", grid_size_m))
+        actor_filter_radius_m = float(
+            cfg.get("actor_filter_radius_m", max(local_size_x_m, local_size_y_m) * 0.75)
+        )
+
         route_pts = self._route.points
         goal = self._pick_goal(ego=ego, route_pts=route_pts, lookahead_m=lookahead_m)
 
-        # --- build grid ---
-        grid = OccGrid(ego_x=ego.pose.x, ego_y=ego.pose.y, size_m=grid_size_m, res_m=grid_res_m)
+        grid = self._occ_provider.get_local_patch(
+            ego_x=ego.pose.x,
+            ego_y=ego.pose.y,
+            world=world,
+            size_x_m=local_size_x_m,
+            size_y_m=local_size_y_m,
+            obstacle_inflation_m=inflation_m,
+            actor_filter_radius_m=actor_filter_radius_m,
+        )
 
-        # Hard constraint: drivable area mask (Driving lanes only)
-        self._apply_drivable_mask_cached(grid, ego_x=ego.pose.x, ego_y=ego.pose.y)
-
-        # Add obstacles
-        for obs in world.obstacles:
-            r = max(0.0, float(obs.radius) + inflation_m)
-            grid.set_occupied_disc(obs.position.x, obs.position.y, r)
-
-        # --- search ---
         t0 = time.time()
         path = self._search(
             ego=ego,
@@ -207,82 +157,73 @@ class HybridAStarMapPlanner(BasePlanner):
         )
         ms = (time.time() - t0) * 1000.0
 
-        if not path:
-            return PlanResult(status=PlanStatus.FAIL, trajectory=None, debug={"ms": ms, "reason": "no_path"})
+        #调用debug draw two circles
+        if bool(cfg.get("debug_draw_two_circles", False)):
+            self._draw_two_circle_ego(
+                x=ego.pose.x,
+                y=ego.pose.y,
+                yaw=ego.pose.yaw,
+                z=0.3,
+                life_time=float(cfg.get("debug_draw_life_time_s", 0.1)),
+            )
 
-        traj = self._path_to_trajectory(path_xyz=path, dt=dt_out, horizon_s=horizon_s, v=target_speed)
+        if not path:
+            return PlanResult(
+                status=PlanStatus.FAIL,
+                trajectory=None,
+                debug={"ms": ms, "reason": "no_path"},
+            )
+
+        traj = self._path_to_trajectory(
+            path_xyz=path,
+            dt=dt_out,
+            horizon_s=horizon_s,
+            v=target_speed,
+        )
         return PlanResult(
             status=PlanStatus.OK,
             trajectory=traj,
-            debug={"ms": ms, "path_len": len(path), "goal": (goal.x, goal.y, goal.yaw)},
+            debug={
+                "ms": ms,
+                "path_len": len(path),
+                "goal": (goal.x, goal.y, goal.yaw),
+            },
         )
-
-    # ---------------------------
-    # Drivable mask from CARLA map
-    # ---------------------------
-    def _apply_drivable_mask(self, grid: OccGrid) -> None:
-        import carla  # local import
-
-        driving = carla.LaneType.Driving
-        # For simplicity: mark non-driving as occupied, driving as free.
-        for i in range(grid.h):
-            row = grid.occ[i]
-            for j in range(grid.w):
-                x, y = grid.ij_to_world(i, j)
-                loc = carla.Location(x=float(x), y=float(y), z=0.0)
-                wp = self._carla_map.get_waypoint(loc, project_to_road=False, lane_type=driving)
-                row[j] = (wp is None)
-
-    def _apply_drivable_mask_cached(self, grid: OccGrid, *, ego_x: float, ego_y: float) -> None:
-        """
-        Cache the drivable-area occupancy (non-drivable => occupied).
-        Rebuild only every N ticks OR if ego moved more than a threshold.
-
-        This avoids calling carla_map.get_waypoint for every cell on every tick.
-        """
-        cfg = self.config
-        every_n = int(cfg.get("mask_update_every_n_ticks", 8))          # e.g. 5~10
-        min_move = float(cfg.get("mask_update_min_move_m", 1.0))       # e.g. 0.5~2.0
-
-        self._mask_tick += 1
-
-        # cache validity: same grid shape/res and still roughly same center region
-        same_grid = False
-        if self._mask_grid_params is not None:
-            w, h, res, min_x, min_y = self._mask_grid_params
-            same_grid = (w == grid.w and h == grid.h and abs(res - grid.res_m) < 1e-9)
-
-            # If grid origin changed a lot, cache becomes invalid (because occ is aligned to world via min_x/min_y)
-            # Since our grid is ego-centered, origin changes with ego. We'll rely mainly on move threshold below.
-            # But if someone changes grid_size/res at runtime, we force rebuild.
-            if not same_grid:
-                pass
-
-        moved = True
-        if self._mask_center_xy is not None:
-            dx = float(ego_x) - self._mask_center_xy[0]
-            dy = float(ego_y) - self._mask_center_xy[1]
-            moved = (dx * dx + dy * dy) >= (min_move * min_move)
-
-        due = (every_n > 0 and (self._mask_tick % every_n == 0))
-
-        need_rebuild = (self._mask_occ is None) or (not same_grid) or moved or due
-
-        if need_rebuild:
-            # Build mask into current grid, then cache
-            self._apply_drivable_mask(grid)
-
-            # Deep-copy occ into cache (do NOT alias, because we'll later modify grid.occ by adding obstacles)
-            self._mask_occ = [row[:] for row in grid.occ]
-            self._mask_center_xy = (float(ego_x), float(ego_y))
-            self._mask_grid_params = (grid.w, grid.h, grid.res_m, grid.min_x, grid.min_y)
+    
+    #debug draw circle
+    def _draw_debug_circle(
+        self,
+        *,
+        cx: float,
+        cy: float,
+        r: float,
+        z: float = 0.3,
+        life_time: float = 0.1,
+        segments: int = 24,
+        color: Tuple[int, int, int] = (255, 0, 0),
+    ) -> None:
+        if self._carla_world is None:
             return
 
-        # Reuse cached mask: copy cached occupancy into current grid
-        # (Still deep copy row by row to avoid aliasing)
-        assert self._mask_occ is not None
-        for i in range(grid.h):
-            grid.occ[i] = self._mask_occ[i][:]
+        import carla
+
+        debug = self._carla_world.debug
+        pts = []
+        for i in range(segments + 1):
+            th = 2.0 * math.pi * i / segments
+            x = cx + r * math.cos(th)
+            y = cy + r * math.sin(th)
+            pts.append(carla.Location(x=float(x), y=float(y), z=float(z)))
+
+        c = carla.Color(r=color[0], g=color[1], b=color[2])
+        for i in range(len(pts) - 1):
+            debug.draw_line(
+                pts[i],
+                pts[i + 1],
+                thickness=0.08,
+                color=c,
+                life_time=life_time,
+            )
 
     # ---------------------------
     # Goal selection on route
@@ -292,7 +233,7 @@ class HybridAStarMapPlanner(BasePlanner):
             return Pose2D(x=ego.pose.x, y=ego.pose.y, yaw=ego.pose.yaw)
 
         ex, ey = ego.pose.x, ego.pose.y
-        # nearest search near last idx for stability
+
         win = int(self.config.get("nearest_search_window", 600))
         lo = max(0, self._last_nearest_idx - win)
         hi = min(len(route_pts) - 1, self._last_nearest_idx + win)
@@ -308,7 +249,6 @@ class HybridAStarMapPlanner(BasePlanner):
 
         self._last_nearest_idx = best_i
 
-        # move forward by arc length
         dist = 0.0
         j = best_i
         while j + 1 < len(route_pts) and dist < lookahead_m:
@@ -325,6 +265,7 @@ class HybridAStarMapPlanner(BasePlanner):
     def _dist_to_route(self, *, x: float, y: float, route_pts: List[Pose2D]) -> float:
         if len(route_pts) < 2:
             return math.hypot(x - route_pts[0].x, y - route_pts[0].y) if route_pts else 0.0
+
         best = 1e18
         ax, ay = route_pts[0].x, route_pts[0].y
         for i in range(1, len(route_pts)):
@@ -343,7 +284,7 @@ class HybridAStarMapPlanner(BasePlanner):
         *,
         ego: EgoState,
         goal: Pose2D,
-        grid: OccGrid,
+        grid: LocalOccPatch,
         route_pts: List[Pose2D],
         wheelbase_m: float,
         steer_max: float,
@@ -356,6 +297,9 @@ class HybridAStarMapPlanner(BasePlanner):
         max_time_ms: float,
         w_ref: float,
     ) -> Optional[List[Tuple[float, float, float]]]:
+        goal_tol_xy_m = float(self.config.get("goal_tol_xy_m", 2.0))
+        goal_tol_yaw_rad = deg2rad(float(self.config.get("goal_tol_yaw_deg", 20.0)))
+
         def key_of(x: float, y: float, yaw: float) -> Tuple[int, int, int]:
             ij = grid.world_to_ij(x, y)
             if ij is None:
@@ -369,36 +313,54 @@ class HybridAStarMapPlanner(BasePlanner):
             return math.hypot(goal.x - x, goal.y - y)
 
         def goal_reached(x: float, y: float, yaw: float) -> bool:
-            if (goal.x - x) ** 2 + (goal.y - y) ** 2 > (2.0 ** 2):
+            if (goal.x - x) ** 2 + (goal.y - y) ** 2 > (goal_tol_xy_m ** 2):
                 return False
-            if abs(wrap_pi(goal.yaw - yaw)) > deg2rad(20.0):
+            if abs(wrap_pi(goal.yaw - yaw)) > goal_tol_yaw_rad:
                 return False
             return True
 
-        def collision_free(seg: List[Tuple[float, float, float]]) -> bool:
-            for sx, sy, _ in seg:
-                if grid.is_occupied(sx, sy):
+        def collision_free(seg):
+            for sx, sy, syaw in seg:
+                if self._ego_two_circles_in_collision(
+                    x=sx,
+                    y=sy,
+                    yaw=syaw,
+                    grid=grid,
+                ):
                     return False
             return True
 
-        # steering set
         if steer_samples <= 1:
             steers = [0.0]
         else:
             steers = [(-1.0 + 2.0 * i / (steer_samples - 1)) * steer_max for i in range(steer_samples)]
 
         sx, sy, syaw = ego.pose.x, ego.pose.y, ego.pose.yaw
-        skey = key_of(sx, sy, syaw)
 
-        start = Node(x=sx, y=sy, yaw=syaw, g=0.0, h=heuristic(sx, sy), parent=None, steer=0.0, seg=None)
+        if self._ego_two_circles_in_collision(x=sx, y=sy, yaw=syaw, grid=grid):
+            return None
+
+        skey = key_of(sx, sy, syaw)
+        start = Node(
+            x=sx,
+            y=sy,
+            yaw=syaw,
+            g=0.0,
+            h=heuristic(sx, sy),
+            parent=None,
+            steer=0.0,
+            seg=None,
+        )
 
         open_heap: List[Tuple[float, int, Tuple[int, int, int]]] = []
         heapq.heappush(open_heap, (start.g + start.h, 0, skey))
+
         nodes: Dict[Tuple[int, int, int], Node] = {skey: start}
         closed: set[Tuple[int, int, int]] = set()
 
+        # best-effort node: keep the node with smallest heuristic-to-goal
         best_key = skey
-        best_f = start.g + start.h
+        best_h = start.h
 
         push_id = 1
         expansions = 0
@@ -416,8 +378,8 @@ class HybridAStarMapPlanner(BasePlanner):
             cur = nodes[k]
             expansions += 1
 
-            if f < best_f:
-                best_f = f
+            if cur.h < best_h:
+                best_h = cur.h
                 best_key = k
 
             if goal_reached(cur.x, cur.y, cur.yaw):
@@ -440,40 +402,57 @@ class HybridAStarMapPlanner(BasePlanner):
                 nx, ny, nyaw = seg[-1]
                 nk = key_of(nx, ny, nyaw)
 
-                # simple cost: length + small steering penalty
                 length = abs(sim_speed) * prim_dt * prim_steps
                 ng = cur.g + length + 0.1 * abs(steer - cur.steer)
 
                 if w_ref > 0.0 and route_pts:
-                    d = self._dist_to_route(x=nx, y=ny, route_pts=route_pts)
-                    ng += w_ref * (d * d)
+                    ref_cost = 0.0
+                    for px, py, _ in seg:
+                        d = self._dist_to_route(x=px, y=py, route_pts=route_pts)
+                        ref_cost += d * d
+                    ng += w_ref * (ref_cost / max(1, len(seg)))
 
                 nh = heuristic(nx, ny)
                 nf = ng + nh
 
                 prev = nodes.get(nk)
                 if prev is None or ng < prev.g:
-                    nodes[nk] = Node(x=nx, y=ny, yaw=nyaw, g=ng, h=nh, parent=k, steer=steer, seg=seg)
+                    nodes[nk] = Node(
+                        x=nx,
+                        y=ny,
+                        yaw=nyaw,
+                        g=ng,
+                        h=nh,
+                        parent=k,
+                        steer=steer,
+                        seg=seg,
+                    )
                     heapq.heappush(open_heap, (nf, push_id, nk))
                     push_id += 1
 
-        # best-effort path
         return self._reconstruct(nodes, best_key) if best_key in nodes else None
 
-    def _reconstruct(self, nodes: Dict[Tuple[int, int, int], Node], last_key: Tuple[int, int, int]) -> List[Tuple[float, float, float]]:
+    def _reconstruct(
+        self,
+        nodes: Dict[Tuple[int, int, int], Node],
+        last_key: Tuple[int, int, int],
+    ) -> List[Tuple[float, float, float]]:
         out: List[Tuple[float, float, float]] = []
         k = last_key
+
         while True:
             n = nodes[k]
             if n.seg is not None:
                 out.extend(reversed(n.seg))
             else:
                 out.append((n.x, n.y, n.yaw))
+
             if n.parent is None:
                 break
             k = n.parent
+
         out.reverse()
-        # remove near-duplicates
+
         filtered: List[Tuple[float, float, float]] = []
         for p in out:
             if not filtered:
@@ -483,12 +462,20 @@ class HybridAStarMapPlanner(BasePlanner):
             dy = p[1] - filtered[-1][1]
             if dx * dx + dy * dy > 1e-4:
                 filtered.append(p)
+
         return filtered
 
     # ---------------------------
     # Path -> Trajectory (simple resampling)
     # ---------------------------
-    def _path_to_trajectory(self, *, path_xyz: List[Tuple[float, float, float]], dt: float, horizon_s: float, v: float) -> Trajectory:
+    def _path_to_trajectory(
+        self,
+        *,
+        path_xyz: List[Tuple[float, float, float]],
+        dt: float,
+        horizon_s: float,
+        v: float,
+    ) -> Trajectory:
         if len(path_xyz) < 2:
             p = path_xyz[0] if path_xyz else (0.0, 0.0, 0.0)
             return Trajectory(points=[TrajectoryPoint(x=p[0], y=p[1], yaw=p[2], v=v)], dt=dt)
@@ -500,13 +487,14 @@ class HybridAStarMapPlanner(BasePlanner):
         s = [0.0]
         for i in range(1, len(path_xyz)):
             s.append(s[-1] + math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]))
+
         total = s[-1]
         if total < 1e-3:
             p = path_xyz[-1]
             return Trajectory(points=[TrajectoryPoint(x=p[0], y=p[1], yaw=p[2], v=v)], dt=dt)
 
         n_out = max(2, int(math.ceil(horizon_s / dt)) + 1)
-        ds = max(0.3, abs(v) * dt)  # minimum step
+        ds = max(0.3, abs(v) * dt)
         points: List[TrajectoryPoint] = []
 
         sk = 0.0
@@ -533,3 +521,158 @@ class HybridAStarMapPlanner(BasePlanner):
             sk += ds
 
         return Trajectory(points=points, dt=dt)
+    
+    # ---------------------------
+    # Ego collision: two-circle model (rear-axle reference)
+    # ---------------------------
+    def _get_two_circle_params(self) -> Tuple[float, float, float]:
+        wheelbase_m = float(self.config.get("ego_wheelbase_m", 2.875))
+        length_m = float(self.config.get("ego_length_m", 4.72))
+        width_m = float(self.config.get("ego_width_m", 1.85))
+        front_overhang_m = float(self.config.get("ego_front_overhang_m", 0.868))
+        rear_overhang_m = float(self.config.get("ego_rear_overhang_m", 0.977))
+        safety_margin_m = float(self.config.get("ego_safety_margin_m", 0.05))
+
+        
+        radius_scale = float(self.config.get("ego_circle_radius_scale", 0.85))
+        center_scale = float(self.config.get("ego_circle_center_scale", 1.0))
+
+        # vehicle bounds in rear-axle frame
+        x_min = -rear_overhang_m
+        x_max = wheelbase_m + front_overhang_m
+
+        length = x_max - x_min
+        half_w = 0.5 * width_m
+
+        # 圆心位置（推荐）
+        rear_circle_x  = x_min + 0 * length * center_scale
+        front_circle_x = x_min + 0.72 * length * center_scale
+
+        # 半径
+        quarter_len = 0.25 * length
+        base_radius = math.hypot(quarter_len, half_w)
+        radius = base_radius * radius_scale + safety_margin_m
+
+        return front_circle_x, rear_circle_x, radius
+    
+    def _disc_in_collision(
+        self,
+        *,
+        cx: float,
+        cy: float,
+        r: float,
+        grid: LocalOccPatch,
+    ) -> bool:
+        """
+        Approximate disc-vs-occupancy collision by sampling the disc.
+        """
+        radial_step = float(self.config.get("circle_sample_radial_step_m", 0.35))
+        radial_step = max(0.15, radial_step)
+
+        if grid.is_occupied(cx, cy):
+            return True
+
+        nr = max(1, int(math.ceil(r / radial_step)))
+        for ir in range(1, nr + 1):
+            rr = r * ir / nr
+            ntheta = max(8, int(math.ceil(2.0 * math.pi * rr / radial_step)))
+            for k in range(ntheta):
+                th = 2.0 * math.pi * k / ntheta
+                px = cx + rr * math.cos(th)
+                py = cy + rr * math.sin(th)
+                if grid.is_occupied(px, py):
+                    return True
+
+        return False
+
+    def _ego_two_circles_in_collision(
+        self,
+        *,
+        x: float,
+        y: float,
+        yaw: float,
+        grid: LocalOccPatch,
+    ) -> bool:
+        front_x, rear_x, radius = self._get_two_circle_params()
+
+        c = math.cos(yaw)
+        s = math.sin(yaw)
+
+        fx = x + c * front_x
+        fy = y + s * front_x
+
+        rx = x + c * rear_x
+        ry = y + s * rear_x
+
+        if self._disc_in_collision(cx=fx, cy=fy, r=radius, grid=grid):
+            return True
+        if self._disc_in_collision(cx=rx, cy=ry, r=radius, grid=grid):
+            return True
+
+        return False
+
+    #show two circle of ego
+    def _draw_two_circle_ego(
+        self,
+        *,
+        x: float,
+        y: float,
+        yaw: float,
+        z: float = 0.3,
+        life_time: float = 0.1,
+    ) -> None:
+        if self._carla_world is None:
+            return
+
+        import carla
+
+        front_x, rear_x, radius = self._get_two_circle_params()
+
+        c = math.cos(yaw)
+        s = math.sin(yaw)
+
+        fx = x + c * front_x
+        fy = y + s * front_x
+        rx = x + c * rear_x
+        ry = y + s * rear_x
+
+        debug = self._carla_world.debug
+
+        # ego reference point
+        debug.draw_point(
+            carla.Location(x=float(x), y=float(y), z=float(z)),
+            size=0.12,
+            color=carla.Color(255, 255, 255),
+            life_time=life_time,
+        )
+
+        # front / rear circle centers
+        debug.draw_point(
+            carla.Location(x=float(fx), y=float(fy), z=float(z)),
+            size=0.12,
+            color=carla.Color(120, 30, 30),
+            life_time=life_time,
+        )
+        debug.draw_point(
+            carla.Location(x=float(rx), y=float(ry), z=float(z)),
+            size=0.12,
+            color=carla.Color(30, 120, 120),
+            life_time=life_time,
+        )
+
+        # line connecting centers
+        debug.draw_line(
+            carla.Location(x=float(fx), y=float(fy), z=float(z)),
+            carla.Location(x=float(rx), y=float(ry), z=float(z)),
+            thickness=0.08,
+            color=carla.Color(0, 200, 255),
+            life_time=life_time,
+        )
+
+        # circles
+        self._draw_debug_circle(
+            cx=fx, cy=fy, r=radius, z=z, life_time=life_time, color=(120, 30, 30)
+        )
+        self._draw_debug_circle(
+            cx=rx, cy=ry, r=radius, z=z, life_time=life_time, color=(30, 120, 120)
+        )

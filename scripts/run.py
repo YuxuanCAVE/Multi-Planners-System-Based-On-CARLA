@@ -1,25 +1,31 @@
 # scripts/run.py
 from __future__ import annotations
 
+import yaml
+
+
+
 import argparse
 import importlib
-import sys
+
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
-import yaml
+import sys
+# --- Adjust this to your CARLA install path （Windows）
+#CARLA_ROOT = Path(r"D:\CARLA0916\CARLA_0.9.16")
 
-# --- Adjust this to your CARLA install path ---
-CARLA_ROOT = Path(r"D:\CARLA0916\CARLA_0.9.16")
-PYAPI = CARLA_ROOT / "PythonAPI"
+#Linux
+sys.path.append("/home/yuxuan/Desktop/Carla_0916/PythonAPI/carla")
+#PYAPI = CARLA_ROOT / "PythonAPI"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # Ensure Python can import both `carla` and `agents`
-sys.path.append(str(PYAPI / "carla"))
-sys.path.append(str(PYAPI))
+# sys.path.append(str(PYAPI / "carla"))
+# sys.path.append(str(PYAPI))
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
