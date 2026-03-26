@@ -1,4 +1,4 @@
-# framework/planning/local/hybrid_astar_a.py
+# framework/planning/local/hybrid_astar_behavior.py
 from __future__ import annotations
 
 import heapq
@@ -64,14 +64,17 @@ class Node:
     seg: Optional[List[Tuple[float, float, float]]] = None
 
 
-class HybridAStarMapPlanner(BasePlanner):
+class HybridAStarBehaviorPlanner(BasePlanner):
     """
-    Minimal Hybrid A* local planner.
+    Hybrid A* planner with behavior-aware search constraints.
 
-    Static drivable area comes from OccupancyMapProvider's cached/static map.
-    Dynamic obstacles are overlaid into the local patch each planning tick.
+    Behavior states:
+      - FOLLOW
+      - LANE_CHANGE_OUT
+      - CRUISE_PASS_LANE
+      - LANE_CHANGE_BACK
     """
-    name: str = "hybrid_astar_map"
+    name: str = "hybrid_astar_behavior"
 
     def reset(self, *, route: Route, map_info: Dict[str, Any]) -> None:
         self._route = route
@@ -93,8 +96,6 @@ class HybridAStarMapPlanner(BasePlanner):
 
         self._behavior_sm = OvertakeStateMachine(config=self.config)
 
-        
-
     def plan(self, *, ego: EgoState, world: WorldModel, t: float) -> PlanResult:
         cfg = self.config
 
@@ -110,24 +111,41 @@ class HybridAStarMapPlanner(BasePlanner):
         default_target_speed = float(cfg.get("target_speed", 6.0))
 
         grid_size_m = float(cfg.get("grid_size_m", 60.0))
-        inflation_m = float(cfg.get("inflation_m", 1.0))
+        inflation_m = float(cfg.get("inflation_m", 0.3))
 
-        wheelbase_m = float(cfg.get("wheelbase_m", 2.8))
+        wheelbase_m = float(cfg.get("wheelbase_m", 2.875))
         steer_max = deg2rad(float(cfg.get("steer_max_deg", 30.0)))
-        steer_samples = int(cfg.get("steer_samples", 7))
+        steer_samples = int(cfg.get("steer_samples", 5))
         prim_dt = float(cfg.get("primitive_dt", 0.1))
-        prim_steps = int(cfg.get("primitive_steps", 10))
-        sim_speed = float(cfg.get("sim_speed_mps", 6.0))
+        prim_steps = int(cfg.get("primitive_steps", 6))
+        sim_speed = float(cfg.get("sim_speed_mps", 7.0))
 
         heading_bins = int(cfg.get("heading_bins", 72))
-        max_expansions = int(cfg.get("max_expansions", 6000))
-        max_time_ms = float(cfg.get("max_time_ms", 60.0))
+        max_expansions = int(cfg.get("max_expansions", 12000))
+        max_time_ms = float(cfg.get("max_time_ms", 120.0))
 
         local_size_x_m = float(cfg.get("local_patch_size_x_m", grid_size_m))
         local_size_y_m = float(cfg.get("local_patch_size_y_m", grid_size_m))
         actor_filter_radius_m = float(
             cfg.get("actor_filter_radius_m", max(local_size_x_m, local_size_y_m) * 0.75)
         )
+
+        # state-aware constraints / costs
+        follow_corridor_half_width_m = float(cfg.get("follow_corridor_half_width_m", 1.6))
+        lane_change_out_corridor_half_width_m = float(cfg.get("lane_change_out_corridor_half_width_m", 5.0))
+        cruise_pass_lane_corridor_half_width_m = float(cfg.get("cruise_pass_lane_corridor_half_width_m", 2.0))
+        lane_change_back_corridor_half_width_m = float(cfg.get("lane_change_back_corridor_half_width_m", 5.0))
+
+        w_follow_center = float(cfg.get("w_follow_center", 2.0))
+        w_lane_change_out_target = float(cfg.get("w_lane_change_out_target", 4.0))
+        w_cruise_pass_lane_target = float(cfg.get("w_cruise_pass_lane_target", 1.5))
+        w_lane_change_back_target = float(cfg.get("w_lane_change_back_target", 4.0))
+
+        w_lane_change_out_progress = float(cfg.get("w_lane_change_out_progress", 0.2))
+        w_cruise_pass_lane_progress = float(cfg.get("w_cruise_pass_lane_progress", 1.0))
+        w_lane_change_back_progress = float(cfg.get("w_lane_change_back_progress", 0.2))
+
+        lane_change_monotonic_tol_m = float(cfg.get("lane_change_monotonic_tol_m", 0.15))
 
         route_pts = self._route.points
 
@@ -147,28 +165,27 @@ class HybridAStarMapPlanner(BasePlanner):
             else default_target_speed
         )
 
-        if behavior.state == "PASS":
+        target_l = float(behavior.goal_lateral_offset_m)
+
+        if behavior.state in ("LANE_CHANGE_OUT", "CRUISE_PASS_LANE"):
             goal = self._pick_pass_goal(
                 ego=ego,
                 route_pts=route_pts,
                 lookahead_m=lookahead_m,
-                lateral_offset_m=behavior.goal_lateral_offset_m,
+                lateral_offset_m=target_l,
             )
-        elif behavior.state == "RETURN":
+        elif behavior.state == "LANE_CHANGE_BACK":
             goal = self._pick_return_goal(
                 ego=ego,
                 route_pts=route_pts,
                 lookahead_m=lookahead_m,
             )
-        else:  # FOLLOW
+        else:
             goal = self._pick_goal(
                 ego=ego,
                 route_pts=route_pts,
                 lookahead_m=lookahead_m,
             )
-
-        #base_goal = self._pick_goal(ego=ego, route_pts=route_pts, lookahead_m=lookahead_m)
-        #goal = self._offset_goal_lateral(base_goal, behavior.goal_lateral_offset_m)
 
         grid = self._occ_provider.get_local_patch(
             ego_x=ego.pose.x,
@@ -179,6 +196,17 @@ class HybridAStarMapPlanner(BasePlanner):
             obstacle_inflation_m=inflation_m,
             actor_filter_radius_m=actor_filter_radius_m,
         )
+
+        if bool(cfg.get("debug_print_behavior", True)) and t - self._last_print_t > 0.2:
+            self._last_print_t = t
+            print(
+                f"[Behavior] {t:.2f}s | state={behavior.state} | reason={behavior.reason} | "
+                f"w_ref={w_ref:.2f} | v={target_speed:.2f} | "
+                f"target_l={target_l:.2f} | "
+                f"lead_long={None if behavior.lead is None else round(behavior.lead.longitudinal, 2)} | "
+                f"lead_lat={None if behavior.lead is None else round(behavior.lead.lateral, 2)} | "
+                f"ego_l={getattr(self._behavior_sm, 'debug_ego_l', None)}"
+            )
 
         t0 = time.time()
         path = self._search(
@@ -196,6 +224,20 @@ class HybridAStarMapPlanner(BasePlanner):
             max_expansions=max_expansions,
             max_time_ms=max_time_ms,
             w_ref=w_ref,
+            behavior_state=behavior.state,
+            target_l=target_l,
+            follow_corridor_half_width_m=follow_corridor_half_width_m,
+            lane_change_out_corridor_half_width_m=lane_change_out_corridor_half_width_m,
+            cruise_pass_lane_corridor_half_width_m=cruise_pass_lane_corridor_half_width_m,
+            lane_change_back_corridor_half_width_m=lane_change_back_corridor_half_width_m,
+            w_follow_center=w_follow_center,
+            w_lane_change_out_target=w_lane_change_out_target,
+            w_cruise_pass_lane_target=w_cruise_pass_lane_target,
+            w_lane_change_back_target=w_lane_change_back_target,
+            w_lane_change_out_progress=w_lane_change_out_progress,
+            w_cruise_pass_lane_progress=w_cruise_pass_lane_progress,
+            w_lane_change_back_progress=w_lane_change_back_progress,
+            lane_change_monotonic_tol_m=lane_change_monotonic_tol_m,
         )
         ms = (time.time() - t0) * 1000.0
 
@@ -208,6 +250,7 @@ class HybridAStarMapPlanner(BasePlanner):
                     "reason": "no_path",
                     "behavior_state": behavior.state,
                     "behavior_reason": behavior.reason,
+                    "goal": (goal.x, goal.y, goal.yaw),
                 },
             )
 
@@ -217,40 +260,6 @@ class HybridAStarMapPlanner(BasePlanner):
             horizon_s=horizon_s,
             v=target_speed,
         )
-
-        if bool(self.config.get("debug_print_behavior", True)):
-            if t - self._last_print_t > 0.2:  # 每 0.2 秒打印一次
-                self._last_print_t = t
-
-                print(
-                    f"[Behavior] {t:.2f}s | "
-                    f"{behavior.state} | "
-                    f"w_ref={w_ref:.2f} | "
-                    f"v={target_speed:.2f} | "
-                    f"s_gap={None if getattr(self._behavior_sm,'debug_ego_rear_s',None) is None else round(self._behavior_sm.debug_ego_rear_s - self._behavior_sm.debug_lead_front_s,2)}"
-                )
-
-        print(f"[Planner] num_obstacles={len(getattr(world, 'obstacles', []) or [])}")
-        for i, obs in enumerate(getattr(world, "obstacles", []) or []):
-            pos = getattr(obs, "position", None)
-            vel = getattr(obs, "velocity", None)
-
-            x = None if pos is None else getattr(pos, "x", None)
-            y = None if pos is None else getattr(pos, "y", None)
-
-            speed = None
-            if vel is not None:
-                vx = float(getattr(vel, "x", 0.0))
-                vy = float(getattr(vel, "y", 0.0))
-                vz = float(getattr(vel, "z", 0.0))
-                speed = math.sqrt(vx * vx + vy * vy + vz * vz)
-
-            print(
-                f"  obs[{i}] id={getattr(obs, 'id', None)} "
-                f"x={None if x is None else round(x,2)} "
-                f"y={None if y is None else round(y,2)} "
-                f"speed={None if speed is None else round(speed,2)}"
-            )
 
         return PlanResult(
             status=PlanStatus.OK,
@@ -264,51 +273,16 @@ class HybridAStarMapPlanner(BasePlanner):
                 "goal_lateral_offset_m": behavior.goal_lateral_offset_m,
                 "lead_longitudinal": None if behavior.lead is None else behavior.lead.longitudinal,
                 "lead_lateral": None if behavior.lead is None else behavior.lead.lateral,
-                # "w_ref": w_ref,
-                # "target_speed": target_speed,
-                # "behavior_state": behavior.state,
+                "ego_rear_s": getattr(self._behavior_sm, "debug_ego_rear_s", None),
+                "lead_front_s": getattr(self._behavior_sm, "debug_lead_front_s", None),
+                "ego_l": getattr(self._behavior_sm, "debug_ego_l", None),
+                "target_l": getattr(self._behavior_sm, "debug_target_l", None),
             },
         )
-    
-    #debug draw circle
-    def _draw_debug_circle(
-        self,
-        *,
-        cx: float,
-        cy: float,
-        r: float,
-        z: float = 0.3,
-        life_time: float = 0.1,
-        segments: int = 24,
-        color: Tuple[int, int, int] = (255, 0, 0),
-    ) -> None:
-        if self._carla_world is None:
-            return
 
-        import carla
-
-        debug = self._carla_world.debug
-        pts = []
-        for i in range(segments + 1):
-            th = 2.0 * math.pi * i / segments
-            x = cx + r * math.cos(th)
-            y = cy + r * math.sin(th)
-            pts.append(carla.Location(x=float(x), y=float(y), z=float(z)))
-
-        c = carla.Color(r=color[0], g=color[1], b=color[2])
-        for i in range(len(pts) - 1):
-            debug.draw_line(
-                pts[i],
-                pts[i + 1],
-                thickness=0.08,
-                color=c,
-                life_time=life_time,
-            )
-
-    # ---------------------------
-    # Goal selection on route
-    # ---------------------------
-    #for destination(GRP)
+    # ------------------------------------------------------------------
+    # Goal selection
+    # ------------------------------------------------------------------
     def _pick_goal(self, *, ego: EgoState, route_pts: List[Pose2D], lookahead_m: float) -> Pose2D:
         if not route_pts:
             return Pose2D(x=ego.pose.x, y=ego.pose.y, yaw=ego.pose.yaw)
@@ -339,7 +313,7 @@ class HybridAStarMapPlanner(BasePlanner):
             j += 1
 
         return route_pts[j]
-    #for pass next step
+
     def _pick_pass_goal(
         self,
         *,
@@ -354,7 +328,7 @@ class HybridAStarMapPlanner(BasePlanner):
             lookahead_m=lookahead_m,
         )
         return self._offset_goal_lateral(base_goal, lateral_offset_m)
-    #for return next step
+
     def _pick_return_goal(
         self,
         *,
@@ -362,53 +336,126 @@ class HybridAStarMapPlanner(BasePlanner):
         route_pts: List[Pose2D],
         lookahead_m: float,
     ) -> Pose2D:
-        if not route_pts:
-            return Pose2D(x=ego.pose.x, y=ego.pose.y, yaw=ego.pose.yaw)
+        short_lookahead = min(lookahead_m, float(self.config.get("return_goal_short_lookahead_m", 6.0)))
+        return self._pick_goal(ego=ego, route_pts=route_pts, lookahead_m=short_lookahead)
 
-        ex, ey = ego.pose.x, ego.pose.y
+    def _offset_goal_lateral(self, base_goal: Pose2D, offset_m: float) -> Pose2D:
+        nx = -math.sin(base_goal.yaw)
+        ny = math.cos(base_goal.yaw)
+        return Pose2D(
+            x=base_goal.x + offset_m * nx,
+            y=base_goal.y + offset_m * ny,
+            yaw=base_goal.yaw,
+        )
 
-        win = int(self.config.get("nearest_search_window", 600))
-        lo = max(0, self._last_nearest_idx - win)
-        hi = min(len(route_pts) - 1, self._last_nearest_idx + win)
+    # ------------------------------------------------------------------
+    # Route geometry helpers
+    # ------------------------------------------------------------------
+    def _nearest_route_frame(
+        self,
+        *,
+        x: float,
+        y: float,
+        route_pts: List[Pose2D],
+    ) -> Tuple[float, float, float]:
+        if len(route_pts) < 2:
+            if route_pts:
+                dx = x - route_pts[0].x
+                dy = y - route_pts[0].y
+                return 0.0, math.hypot(dx, dy), route_pts[0].yaw
+            return 0.0, 0.0, 0.0
 
-        best_i = self._last_nearest_idx
+        best_s = 0.0
+        best_l = 0.0
+        best_yaw = route_pts[0].yaw
         best_d2 = 1e18
-        for i in range(lo, hi + 1):
-            p = route_pts[i]
-            d2 = dist2(p.x, p.y, ex, ey)
+        accum_s = 0.0
+
+        for i in range(len(route_pts) - 1):
+            ax, ay = route_pts[i].x, route_pts[i].y
+            bx, by = route_pts[i + 1].x, route_pts[i + 1].y
+
+            abx = bx - ax
+            aby = by - ay
+            ab2 = abx * abx + aby * aby
+            seg_len = math.hypot(abx, aby)
+            if ab2 <= 1e-9 or seg_len <= 1e-9:
+                accum_s += seg_len
+                continue
+
+            apx = x - ax
+            apy = y - ay
+            t = clamp((apx * abx + apy * aby) / ab2, 0.0, 1.0)
+
+            px = ax + t * abx
+            py = ay + t * aby
+
+            dx = x - px
+            dy = y - py
+            d2 = dx * dx + dy * dy
+
             if d2 < best_d2:
+                yaw = math.atan2(aby, abx)
+                left_nx = -math.sin(yaw)
+                left_ny = math.cos(yaw)
+                l_signed = (x - px) * left_nx + (y - py) * left_ny
+
                 best_d2 = d2
-                best_i = i
+                best_s = accum_s + t * seg_len
+                best_l = l_signed
+                best_yaw = yaw
 
-        self._last_nearest_idx = best_i
+            accum_s += seg_len
 
-        dist = 0.0
-        j = best_i
-        while j + 1 < len(route_pts) and dist < lookahead_m:
-            dx = route_pts[j + 1].x - route_pts[j].x
-            dy = route_pts[j + 1].y - route_pts[j].y
-            dist += math.hypot(dx, dy)
-            j += 1
-
-        return route_pts[j]
+        return best_s, best_l, best_yaw
 
     def _dist_to_route(self, *, x: float, y: float, route_pts: List[Pose2D]) -> float:
-        if len(route_pts) < 2:
-            return math.hypot(x - route_pts[0].x, y - route_pts[0].y) if route_pts else 0.0
+        _, l, _ = self._nearest_route_frame(x=x, y=y, route_pts=route_pts)
+        return abs(l)
 
-        best = 1e18
-        ax, ay = route_pts[0].x, route_pts[0].y
-        for i in range(1, len(route_pts)):
-            bx, by = route_pts[i].x, route_pts[i].y
-            d2 = point_to_segment_dist2(x, y, ax, ay, bx, by)
-            if d2 < best:
-                best = d2
-            ax, ay = bx, by
-        return math.sqrt(best)
+    # ------------------------------------------------------------------
+    # Search corridor by behavior
+    # ------------------------------------------------------------------
+    def _seg_allowed_by_state(
+        self,
+        *,
+        seg: List[Tuple[float, float, float]],
+        route_pts: List[Pose2D],
+        behavior_state: str,
+        target_l: float,
+        follow_corridor_half_width_m: float,
+        lane_change_out_corridor_half_width_m: float,
+        cruise_pass_lane_corridor_half_width_m: float,
+        lane_change_back_corridor_half_width_m: float,
+    ) -> bool:
+        for px, py, _ in seg:
+            _, l, _ = self._nearest_route_frame(x=px, y=py, route_pts=route_pts)
 
-    # ---------------------------
+            if behavior_state == "FOLLOW":
+                if abs(l) > follow_corridor_half_width_m:
+                    return False
+
+            elif behavior_state == "LANE_CHANGE_OUT":
+                lo = min(0.0, target_l) - 0.8
+                hi = max(0.0, target_l) + 0.8
+                if l < lo - lane_change_out_corridor_half_width_m or l > hi + lane_change_out_corridor_half_width_m:
+                    return False
+
+            elif behavior_state == "CRUISE_PASS_LANE":
+                if abs(l - target_l) > cruise_pass_lane_corridor_half_width_m:
+                    return False
+
+            elif behavior_state == "LANE_CHANGE_BACK":
+                lo = min(0.0, target_l) - 0.8
+                hi = max(0.0, target_l) + 0.8
+                if l < lo - lane_change_back_corridor_half_width_m or l > hi + lane_change_back_corridor_half_width_m:
+                    return False
+
+        return True
+
+    # ------------------------------------------------------------------
     # Hybrid A*
-    # ---------------------------
+    # ------------------------------------------------------------------
     def _search(
         self,
         *,
@@ -426,9 +473,23 @@ class HybridAStarMapPlanner(BasePlanner):
         max_expansions: int,
         max_time_ms: float,
         w_ref: float,
+        behavior_state: str,
+        target_l: float,
+        follow_corridor_half_width_m: float,
+        lane_change_out_corridor_half_width_m: float,
+        cruise_pass_lane_corridor_half_width_m: float,
+        lane_change_back_corridor_half_width_m: float,
+        w_follow_center: float,
+        w_lane_change_out_target: float,
+        w_cruise_pass_lane_target: float,
+        w_lane_change_back_target: float,
+        w_lane_change_out_progress: float,
+        w_cruise_pass_lane_progress: float,
+        w_lane_change_back_progress: float,
+        lane_change_monotonic_tol_m: float,
     ) -> Optional[List[Tuple[float, float, float]]]:
-        goal_tol_xy_m = float(self.config.get("goal_tol_xy_m", 2.0))
-        goal_tol_yaw_rad = deg2rad(float(self.config.get("goal_tol_yaw_deg", 20.0)))
+        goal_tol_xy_m = float(self.config.get("goal_tol_xy_m", 2.5))
+        goal_tol_yaw_rad = deg2rad(float(self.config.get("goal_tol_yaw_deg", 25.0)))
 
         def key_of(x: float, y: float, yaw: float) -> Tuple[int, int, int]:
             ij = grid.world_to_ij(x, y)
@@ -451,12 +512,7 @@ class HybridAStarMapPlanner(BasePlanner):
 
         def collision_free(seg):
             for sx, sy, syaw in seg:
-                if self._ego_two_circles_in_collision(
-                    x=sx,
-                    y=sy,
-                    yaw=syaw,
-                    grid=grid,
-                ):
+                if self._ego_two_circles_in_collision(x=sx, y=sy, yaw=syaw, grid=grid):
                     return False
             return True
 
@@ -488,7 +544,6 @@ class HybridAStarMapPlanner(BasePlanner):
         nodes: Dict[Tuple[int, int, int], Node] = {skey: start}
         closed: set[Tuple[int, int, int]] = set()
 
-        # best-effort node: keep the node with smallest heuristic-to-goal
         best_key = skey
         best_h = start.h
 
@@ -500,7 +555,7 @@ class HybridAStarMapPlanner(BasePlanner):
             if (time.time() - t0) * 1000.0 > max_time_ms:
                 break
 
-            f, _pid, k = heapq.heappop(open_heap)
+            _f, _pid, k = heapq.heappop(open_heap)
             if k in closed:
                 continue
             closed.add(k)
@@ -526,21 +581,64 @@ class HybridAStarMapPlanner(BasePlanner):
                     dt=prim_dt,
                     steps=prim_steps,
                 )
+
                 if not collision_free(seg):
+                    continue
+
+                if not self._seg_allowed_by_state(
+                    seg=seg,
+                    route_pts=route_pts,
+                    behavior_state=behavior_state,
+                    target_l=target_l,
+                    follow_corridor_half_width_m=follow_corridor_half_width_m,
+                    lane_change_out_corridor_half_width_m=lane_change_out_corridor_half_width_m,
+                    cruise_pass_lane_corridor_half_width_m=cruise_pass_lane_corridor_half_width_m,
+                    lane_change_back_corridor_half_width_m=lane_change_back_corridor_half_width_m,
+                ):
                     continue
 
                 nx, ny, nyaw = seg[-1]
                 nk = key_of(nx, ny, nyaw)
 
+                _, cur_l, _ = self._nearest_route_frame(x=cur.x, y=cur.y, route_pts=route_pts)
+                _, end_l, _ = self._nearest_route_frame(x=nx, y=ny, route_pts=route_pts)
+
+                if behavior_state == "LANE_CHANGE_OUT":
+                    if target_l > 0.0 and end_l < cur_l - lane_change_monotonic_tol_m:
+                        continue
+                    if target_l < 0.0 and end_l > cur_l + lane_change_monotonic_tol_m:
+                        continue
+
+                if behavior_state == "LANE_CHANGE_BACK":
+                    if cur_l > 0.0 and end_l > cur_l + lane_change_monotonic_tol_m:
+                        continue
+                    if cur_l < 0.0 and end_l < cur_l - lane_change_monotonic_tol_m:
+                        continue
+
                 length = abs(sim_speed) * prim_dt * prim_steps
                 ng = cur.g + length + 0.1 * abs(steer - cur.steer)
 
-                if w_ref > 0.0 and route_pts:
-                    ref_cost = 0.0
-                    for px, py, _ in seg:
-                        d = self._dist_to_route(x=px, y=py, route_pts=route_pts)
-                        ref_cost += d * d
-                    ng += w_ref * (ref_cost / max(1, len(seg)))
+                if route_pts and w_ref > 0.0:
+                    ng += w_ref * (end_l * end_l)
+
+                goal_dir_x = math.cos(goal.yaw)
+                goal_dir_y = math.sin(goal.yaw)
+                progress = (nx - cur.x) * goal_dir_x + (ny - cur.y) * goal_dir_y
+
+                if behavior_state == "FOLLOW":
+                    ng += w_follow_center * (end_l * end_l)
+
+                elif behavior_state == "LANE_CHANGE_OUT":
+                    ng += w_lane_change_out_target * ((end_l - target_l) ** 2)
+                    ng -= w_lane_change_out_progress * progress
+
+                elif behavior_state == "CRUISE_PASS_LANE":
+                    ng += w_cruise_pass_lane_target * ((end_l - target_l) ** 2)
+                    ng -= w_cruise_pass_lane_progress * progress
+
+                elif behavior_state == "LANE_CHANGE_BACK":
+                    ng += w_lane_change_back_target * (end_l * end_l)
+                    ng -= w_lane_change_back_progress * progress
 
                 nh = heuristic(nx, ny)
                 nf = ng + nh
@@ -595,9 +693,9 @@ class HybridAStarMapPlanner(BasePlanner):
 
         return filtered
 
-    # ---------------------------
-    # Path -> Trajectory (simple resampling)
-    # ---------------------------
+    # ------------------------------------------------------------------
+    # Path -> Trajectory
+    # ------------------------------------------------------------------
     def _path_to_trajectory(
         self,
         *,
@@ -651,40 +749,34 @@ class HybridAStarMapPlanner(BasePlanner):
             sk += ds
 
         return Trajectory(points=points, dt=dt)
-    
-    # ---------------------------
-    # Ego collision: two-circle model (rear-axle reference)
-    # ---------------------------
+
+    # ------------------------------------------------------------------
+    # Ego collision: two-circle model
+    # ------------------------------------------------------------------
     def _get_two_circle_params(self) -> Tuple[float, float, float]:
         wheelbase_m = float(self.config.get("ego_wheelbase_m", 2.875))
-        length_m = float(self.config.get("ego_length_m", 4.72))
         width_m = float(self.config.get("ego_width_m", 1.85))
         front_overhang_m = float(self.config.get("ego_front_overhang_m", 0.868))
         rear_overhang_m = float(self.config.get("ego_rear_overhang_m", 0.977))
-        safety_margin_m = float(self.config.get("ego_safety_margin_m", 0.05))
+        safety_margin_m = float(self.config.get("ego_safety_margin_m", 0.02))
 
-        
-        radius_scale = float(self.config.get("ego_circle_radius_scale", 0.85))
+        radius_scale = float(self.config.get("ego_circle_radius_scale", 0.80))
         center_scale = float(self.config.get("ego_circle_center_scale", 1.0))
 
-        # vehicle bounds in rear-axle frame
         x_min = -rear_overhang_m
         x_max = wheelbase_m + front_overhang_m
-
         length = x_max - x_min
         half_w = 0.5 * width_m
 
-        # 圆心位置（推荐）
-        rear_circle_x  = x_min + 0.15 * length * center_scale
-        front_circle_x = x_min + 0.7 * length * center_scale
+        rear_circle_x = x_min + 0.25 * length * center_scale
+        front_circle_x = x_min + 0.75 * length * center_scale
 
-        # 半径
         quarter_len = 0.25 * length
         base_radius = math.hypot(quarter_len, half_w)
         radius = base_radius * radius_scale + safety_margin_m
 
         return front_circle_x, rear_circle_x, radius
-    
+
     def _disc_in_collision(
         self,
         *,
@@ -693,9 +785,6 @@ class HybridAStarMapPlanner(BasePlanner):
         r: float,
         grid: LocalOccPatch,
     ) -> bool:
-        """
-        Approximate disc-vs-occupancy collision by sampling the disc.
-        """
         radial_step = float(self.config.get("circle_sample_radial_step_m", 0.35))
         radial_step = max(0.15, radial_step)
 
@@ -740,117 +829,3 @@ class HybridAStarMapPlanner(BasePlanner):
             return True
 
         return False
-
-    #show two circle of ego
-    def _draw_two_circle_ego(
-        self,
-        *,
-        x: float,
-        y: float,
-        yaw: float,
-        z: float = 0.3,
-        life_time: float = 0.1,
-    ) -> None:
-        if self._carla_world is None:
-            return
-
-        import carla
-
-        front_x, rear_x, radius = self._get_two_circle_params()
-
-        c = math.cos(yaw)
-        s = math.sin(yaw)
-
-        fx = x + c * front_x
-        fy = y + s * front_x
-        rx = x + c * rear_x
-        ry = y + s * rear_x
-
-        debug = self._carla_world.debug
-
-        # ego reference point
-        debug.draw_point(
-            carla.Location(x=float(x), y=float(y), z=float(z)),
-            size=0.12,
-            color=carla.Color(255, 255, 255),
-            life_time=life_time,
-        )
-
-        # front / rear circle centers
-        debug.draw_point(
-            carla.Location(x=float(fx), y=float(fy), z=float(z)),
-            size=0.12,
-            color=carla.Color(120, 30, 30),
-            life_time=life_time,
-        )
-        debug.draw_point(
-            carla.Location(x=float(rx), y=float(ry), z=float(z)),
-            size=0.12,
-            color=carla.Color(30, 120, 120),
-            life_time=life_time,
-        )
-
-        # line connecting centers
-        debug.draw_line(
-            carla.Location(x=float(fx), y=float(fy), z=float(z)),
-            carla.Location(x=float(rx), y=float(ry), z=float(z)),
-            thickness=0.08,
-            color=carla.Color(0, 200, 255),
-            life_time=life_time,
-        )
-
-        # circles
-        self._draw_debug_circle(
-            cx=fx, cy=fy, r=radius, z=z, life_time=life_time, color=(120, 30, 30)
-        )
-        self._draw_debug_circle(
-            cx=rx, cy=ry, r=radius, z=z, life_time=life_time, color=(30, 120, 120)
-        )
-
-    def _offset_goal_lateral(self, base_goal: Pose2D, offset_m: float) -> Pose2D:
-
-        nx = -math.sin(base_goal.yaw)
-        ny = math.cos(base_goal.yaw)
-        return Pose2D(
-            x=base_goal.x + offset_m * nx,
-            y=base_goal.y + offset_m * ny,
-            yaw=base_goal.yaw,
-        )
-    
-
-        if len(route_pts) < 2:
-            return 0.0
-
-        best_s = 0.0
-        best_d2 = 1e18
-        accum_s = 0.0
-
-        for i in range(len(route_pts) - 1):
-            ax, ay = route_pts[i].x, route_pts[i].y
-            bx, by = route_pts[i + 1].x, route_pts[i + 1].y
-
-            abx = bx - ax
-            aby = by - ay
-            ab2 = abx * abx + aby * aby
-            if ab2 <= 1e-9:
-                continue
-
-            apx = x - ax
-            apy = y - ay
-            t = (apx * abx + apy * aby) / ab2
-            t = max(0.0, min(1.0, t))
-
-            px = ax + t * abx
-            py = ay + t * aby
-
-            d2 = (x - px) ** 2 + (y - py) ** 2
-            seg_len = math.hypot(abx, aby)
-            s_here = accum_s + t * seg_len
-
-            if d2 < best_d2:
-                best_d2 = d2
-                best_s = s_here
-
-            accum_s += seg_len
-
-        return best_s

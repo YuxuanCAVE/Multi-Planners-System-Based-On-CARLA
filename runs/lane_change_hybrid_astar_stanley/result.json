@@ -1,0 +1,20 @@
+{
+  "reason": "reached_goal",
+  "steps": 343,
+  "sim_time_s": 17.150000000000002,
+  "wall_time_s": 56.157431840896606,
+  "dist_to_goal": 3.6996104040387117,
+  "metrics_summary": {
+    "num_samples": 344,
+    "cte_rmse_m": 0.2333139246366434,
+    "cte_max_abs_m": 1.0176043344589065,
+    "heading_rmse_rad": 0.15962841963372587,
+    "heading_max_abs_rad": 0.6024524548065656,
+    "speed_err_rmse_mps": 1.97110885697653,
+    "d_steer_rmse": 0.10233831464809219,
+    "steer_saturation_count": 3,
+    "throttle_saturation_count": 0,
+    "brake_saturation_count": 0,
+    "cte_mean_m": -0.013424190897426745
+  }
+}

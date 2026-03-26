@@ -11,7 +11,7 @@ scenario:
     weather: "ClearNoon"
 
     ego_blueprint: "vehicle.tesla.model3"
-    ego_spawn: { spawn_point_index: 0 }
+    ego_spawn: { spawn_point_index: 10 }
 
     goal: { spawn_point_index: 20 }
     goal_radius_m: 4.0
@@ -81,7 +81,7 @@ planner:
     circle_sample_radial_step_m: 0.45
 
     #debug draw two circles
-    debug_draw_two_circles : true
+    debug_draw_two_circles : false
 
     #two circles parameters
     ego_circle_radius_scale: 0.9

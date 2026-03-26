@@ -245,6 +245,7 @@ class OccupancyMapProvider:
         size_y_m: float,
         obstacle_inflation_m: float = 1.0,
         actor_filter_radius_m: Optional[float] = None,
+        include_dynamic_obstacles: bool = False,
     ) -> LocalOccPatch:
         if self.static_map is None:
             raise RuntimeError("static_map is not built yet")
@@ -256,14 +257,16 @@ class OccupancyMapProvider:
             size_y_m=size_y_m,
         )
 
-        self._overlay_dynamic_obstacles(
-            patch=patch,
-            ego_x=ego_x,
-            ego_y=ego_y,
-            world=world,
-            inflation_m=obstacle_inflation_m,
-            actor_filter_radius_m=actor_filter_radius_m,
-        )
+        if include_dynamic_obstacles:
+            self._overlay_dynamic_obstacles(
+                patch=patch,
+                ego_x=ego_x,
+                ego_y=ego_y,
+                world=world,
+                inflation_m=obstacle_inflation_m,
+                actor_filter_radius_m=actor_filter_radius_m,
+            )
+
         return patch
 
     def _overlay_dynamic_obstacles(

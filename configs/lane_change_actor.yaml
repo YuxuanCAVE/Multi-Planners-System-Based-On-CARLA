@@ -33,11 +33,12 @@ scenario:
     actors: []
 
 planner:
-  name: "framework.planning.local.hybrid_astar:HybridAStarMapPlanner"
+  name: "framework.planning.local.a_star:HybridAStarMapPlanner"
   config:
     dt: 0.1
     horizon_s: 6.0
     target_speed: 8.0
+    planner_target_speed: 8.0
 
     static_map_res_m: 0.5
     static_map_margin_m: 30.0
@@ -56,17 +57,44 @@ planner:
 
     wheelbase_m: 2.875
     steer_max_deg: 30.0
-    steer_samples: 7
-    sim_speed_mps: 7.0
+    steer_samples: 5
+    sim_speed_mps: 5.0
     primitive_dt: 0.1
     primitive_steps: 6
     heading_bins: 72
 
-    max_expansions: 12000
-    max_time_ms: 150.0
+    max_expansions: 5000
+    max_time_ms: 80.0
 
-    w_ref: 0.0
+    # route tracking
+    w_ref: 1.0
 
+    # no-state-machine lateral candidates
+    pass_side: "left"
+    pass_lane_offset_m: 3.5
+    lateral_candidates_m: [0.0, 1.75, 3.5]
+
+    # candidate switching / commit
+    w_lane_change: 2
+    w_switch: 2.5
+
+    # safety soft cost
+    w_safety: 4.0
+    lead_cost_front_weight: 12.0
+    lead_cost_rear_weight: 4.0
+    lead_cost_lateral_weight: 8.0
+    lead_cost_front_power: 3.0
+    lead_cost_rear_power: 2.0
+    lead_cost_lateral_power: 4.0
+
+    # lead-related shaping
+    lead_detect_forward_m: 50.0
+    lead_lane_half_width_m: 3.0
+    return_trigger_gap_m: 6.0
+    w_progress_bonus: 1.0
+    w_return_bonus: 1.0
+
+    # ego geometry
     ego_wheelbase_m: 2.875
     ego_length_m: 4.72
     ego_width_m: 1.85
@@ -82,6 +110,46 @@ planner:
     ego_circle_center_scale: 1.0
     ego_safety_margin_m: 0.02
 
+    #lane_center
+    w_lane_center: 1.5
+    lane_center_soft_tol_m: 0.35
+
+    w_early_return: 4.0
+    parallel_lateral_guard_m: 2.2
+
+    tracked_lead_keep_forward_m: 45.0
+    tracked_lead_keep_backward_m: 15.0
+    tracked_lead_keep_lateral_m: 8.0
+    tracked_lead_max_lost_cycles: 8
+    tracked_lead_release_gap_m: 8.0
+
+
+    # actor model: body hard collision + safety soft zone
+  actor_model:
+    default_actor_length_m: 4.5
+    default_actor_width_m: 1.8
+
+    body_front_margin_m: 0.0
+    body_rear_margin_m: 0.0
+    body_lateral_margin_m: 0.0
+
+    safety_front_m: 4.0
+    safety_rear_m: 1.5
+    safety_lateral_m: 0.3
+
+    enable_dynamic_safety: false
+
+    safety_field_weight: 3.0
+    safety_field_power: 3.0
+    safety_field_center_shift_x_m: 0.2
+
+    max_safety_front_m: 12.0
+    max_safety_rear_m: 5.0
+    max_safety_lateral_m: 1.5
+
+    min_speed_for_velocity_yaw_mps: 0.2
+    
+ 
 controller:
   name: "framework.control.stanley:StanleyController"
   config:
