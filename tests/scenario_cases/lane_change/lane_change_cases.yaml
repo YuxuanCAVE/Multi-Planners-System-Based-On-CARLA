@@ -1,0 +1,50 @@
+scenario_name: lane_change_overtake
+base_config: configs/lane_change_actor.yaml
+cases:
+  - case_id: overtake_easy_return
+    ego_initial_speed: 8.0
+    lead_vehicle_initial_distance: 22.0
+    lead_vehicle_speed: 2.0
+    allow_left_lane_change: true
+    allow_right_lane_change: false
+    adjacent_rear_vehicle_exists: false
+    adjacent_rear_distance: 18.0
+    adjacent_rear_speed: 7.0
+    require_overtake_completion: true
+    require_return_to_original_lane: true
+    simulation_timeout_s: 140.0
+    random_seed: 7
+    expected_success: true
+    tags: [overtake, return]
+
+  - case_id: overtake_dense_no_return
+    ego_initial_speed: 7.5
+    lead_vehicle_initial_distance: 18.0
+    lead_vehicle_speed: 3.0
+    allow_left_lane_change: true
+    allow_right_lane_change: false
+    adjacent_rear_vehicle_exists: true
+    adjacent_rear_distance: 14.0
+    adjacent_rear_speed: 8.0
+    require_overtake_completion: true
+    require_return_to_original_lane: false
+    simulation_timeout_s: 120.0
+    random_seed: 11
+    expected_success: true
+    tags: [overtake]
+
+  - case_id: overtake_hard_gap
+    ego_initial_speed: 7.0
+    lead_vehicle_initial_distance: 16.0
+    lead_vehicle_speed: 4.0
+    allow_left_lane_change: true
+    allow_right_lane_change: false
+    adjacent_rear_vehicle_exists: true
+    adjacent_rear_distance: 10.0
+    adjacent_rear_speed: 8.5
+    require_overtake_completion: true
+    require_return_to_original_lane: false
+    simulation_timeout_s: 100.0
+    random_seed: 23
+    expected_success: true
+    tags: [overtake, stress]
