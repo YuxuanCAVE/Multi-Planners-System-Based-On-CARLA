@@ -1,0 +1,29 @@
+scenario_name: lane_change_overtake
+base_config: configs/lane_change_actor.yaml
+cases:
+  - case_id: overtake_easy_return
+    ego_initial_speed: 8.0
+    lead_vehicle_initial_distance: 22.0
+    lead_vehicle_speed: 2.0
+    simulation_timeout_s: 140.0
+    random_seed: 7
+    expected_success: true
+    tags: [overtake, return]
+
+  - case_id: overtake_dense_no_return
+    ego_initial_speed: 7.5
+    lead_vehicle_initial_distance: 18.0
+    lead_vehicle_speed: 3.0
+    simulation_timeout_s: 120.0
+    random_seed: 11
+    expected_success: true
+    tags: [overtake]
+
+  - case_id: overtake_hard_gap
+    ego_initial_speed: 7.0
+    lead_vehicle_initial_distance: 16.0
+    lead_vehicle_speed: 4.0
+    simulation_timeout_s: 100.0
+    random_seed: 23
+    expected_success: true
+    tags: [overtake, stress]
