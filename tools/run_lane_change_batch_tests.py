@@ -39,7 +39,7 @@ def main() -> None:
     eval_results = []
     for case in cases:
         print(f"[lane-change] running case={case.case_id}")
-        execution = run_lane_change_case(case, base_config_path=base_cfg, output_dir=out_dir / "raw_runs")
+        execution = run_lane_change_case(case, base_config_path=base_cfg, output_dir=out_dir)
         evaluation = evaluate_lane_change_result(case, execution, scenario_name=suite.scenario_name)
         write_case_result(case_out_dir, evaluation)
         eval_results.append(evaluation)

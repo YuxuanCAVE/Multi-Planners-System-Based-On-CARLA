@@ -1,0 +1,165 @@
+carla:
+  host: 127.0.0.1
+  port: 2000
+  timeout_s: 10.0
+scenario:
+  name: framework.scenarios.lane_change:ConfigurableRouteScenario
+  config:
+    id: lane_change_01
+    map_name: Town10HD
+    weather: ClearNoon
+    ego_blueprint: vehicle.tesla.model3
+    ego_spawn:
+      spawn_point_index: 145
+    goal:
+      spawn_point_index: 120
+    goal_radius_m: 4.0
+    timeout_s: 240.0
+    route:
+      source: grp
+      sampling_resolution_m: 0.5
+    lead_vehicle:
+      enable: true
+      blueprint: vehicle.audi.tt
+      distance_m: 24.0
+      target_speed_mps: 2.0
+      step_m: 2.0
+      lateral_offset_m: 0.0
+      z_lift: 0.5
+    actors: []
+planner:
+  name: framework.planning.local.a_star:HybridAStarMapPlanner
+  config:
+    dt: 0.1
+    horizon_s: 6.0
+    target_speed: 8.0
+    planner_target_speed: 8.0
+    static_map_res_m: 0.5
+    static_map_margin_m: 30.0
+    grid_size_m: 70.0
+    local_patch_size_x_m: 70.0
+    local_patch_size_y_m: 60.0
+    actor_filter_radius_m: 50.0
+    inflation_m: 0.2
+    lookahead_m: 45.0
+    nearest_search_window: 600
+    goal_tol_xy_m: 2.5
+    goal_tol_yaw_deg: 25.0
+    wheelbase_m: 2.875
+    steer_max_deg: 30.0
+    steer_samples: 5
+    sim_speed_mps: 5.0
+    primitive_dt: 0.1
+    primitive_steps: 6
+    heading_bins: 72
+    max_expansions: 5000
+    max_time_ms: 80.0
+    w_ref: 1.0
+    pass_side: left
+    pass_lane_offset_m: 3.5
+    lateral_candidates_m:
+    - 0.0
+    - 1.75
+    - 3.5
+    w_lane_change: 2
+    w_switch: 2.5
+    w_safety: 4.0
+    lead_cost_front_weight: 12.0
+    lead_cost_rear_weight: 4.0
+    lead_cost_lateral_weight: 8.0
+    lead_cost_front_power: 3.0
+    lead_cost_rear_power: 2.0
+    lead_cost_lateral_power: 4.0
+    lead_detect_forward_m: 50.0
+    lead_lane_half_width_m: 3.0
+    return_trigger_gap_m: 6.0
+    w_progress_bonus: 1.0
+    w_return_bonus: 1.0
+    ego_wheelbase_m: 2.875
+    ego_length_m: 4.72
+    ego_width_m: 1.85
+    ego_front_overhang_m: 0.868
+    ego_rear_overhang_m: 0.977
+    circle_sample_radial_step_m: 0.35
+    debug_draw_two_circles: true
+    debug_draw_life_time_s: 0.1
+    ego_circle_radius_scale: 0.85
+    ego_circle_center_scale: 1.0
+    ego_safety_margin_m: 0.02
+    w_lane_center: 1.5
+    lane_center_soft_tol_m: 0.35
+    w_early_return: 4.0
+    parallel_lateral_guard_m: 2.2
+    tracked_lead_keep_forward_m: 45.0
+    tracked_lead_keep_backward_m: 15.0
+    tracked_lead_keep_lateral_m: 8.0
+    tracked_lead_max_lost_cycles: 8
+    tracked_lead_release_gap_m: 8.0
+  actor_model:
+    default_actor_length_m: 4.5
+    default_actor_width_m: 1.8
+    body_front_margin_m: 0.0
+    body_rear_margin_m: 0.0
+    body_lateral_margin_m: 0.0
+    safety_front_m: 4.0
+    safety_rear_m: 1.5
+    safety_lateral_m: 0.3
+    enable_dynamic_safety: false
+    safety_field_weight: 3.0
+    safety_field_power: 3.0
+    safety_field_center_shift_x_m: 0.2
+    max_safety_front_m: 12.0
+    max_safety_rear_m: 5.0
+    max_safety_lateral_m: 1.5
+    min_speed_for_velocity_yaw_mps: 0.2
+controller:
+  name: framework.control.stanley:StanleyController
+  config:
+    target_speed: 8.0
+    enable_longitudinal: true
+    wheel_base: 2.7
+    max_steer_deg: 35.0
+    k_stanley: 1.0
+    v_soft: 1.5
+    use_lookahead: true
+    lookahead_base: 2.5
+    lookahead_gain: 0.25
+    enable_steer_rate_limit: true
+    max_steer_rate_deg_s: 150.0
+    kp_speed: 0.5
+    max_throttle: 0.75
+    max_brake: 0.6
+runner:
+  sync: true
+  fixed_delta_seconds: 0.05
+  no_rendering_mode: false
+  max_steps: 2000
+  debug_draw: true
+  enable_recorder: true
+  obstacle_range_m: 100.0
+  max_obstacles: 60
+  ignore_static_parked: false
+  recorder:
+    save_dir: runs/lane_change_pytest/raw_runs
+    run_name: case_02
+    save_csv: true
+    save_json: true
+    record_world_obstacles: true
+    max_obstacles: 20
+    record_trajectory: summary
+    max_traj_points: 200
+    plot_ego_xy: true
+    plot_speed: true
+    plot_controls: true
+    plot_plan_summary: true
+    flush_every_n: 0
+  metrics:
+    enabled: true
+    use_lookahead: true
+    lookahead_base: 2.0
+    lookahead_gain: 0.2
+    use_traj_speed_ref: false
+    save_csv: true
+    save_json: true
+    plot_errors: true
+    plot_controls: true

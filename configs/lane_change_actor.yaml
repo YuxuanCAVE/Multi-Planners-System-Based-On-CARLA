@@ -176,9 +176,9 @@ controller:
 runner:
   sync: true
   fixed_delta_seconds: 0.05
-  no_rendering_mode: false
+  no_rendering_mode: true 
   max_steps: 2000
-  debug_draw: true
+  debug_draw: false
   enable_recorder: true
 
   obstacle_range_m: 100.0

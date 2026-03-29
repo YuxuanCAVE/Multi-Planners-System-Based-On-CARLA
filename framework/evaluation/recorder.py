@@ -145,6 +145,7 @@ class Recorder:
         self._run_dir.mkdir(parents=True, exist_ok=True)
 
         self._write_text("meta.json", json.dumps(self._meta, ensure_ascii=False, indent=2))
+        self._write_reference_path_from_meta()
 
     def step(
         self,
@@ -241,6 +242,13 @@ class Recorder:
         else:
             row["num_obstacles"] = int(len(world_model.obstacles))
 
+        # tracked lead semantic fields (best effort, keep obstacles payload unchanged)
+        self._append_tracked_lead_fields(
+            row=row,
+            ego_state=ego_state,
+            world_model=world_model,
+        )
+
         # sensors / events
         self._update_events_from_sensors(t_sim=t_sim, sensors=sensors, row=row)
 
@@ -320,6 +328,38 @@ class Recorder:
     def _write_text(self, name: str, text: str) -> None:
         assert self._run_dir is not None
         (self._run_dir / name).write_text(text, encoding="utf-8")
+
+    def _write_reference_path_from_meta(self) -> None:
+        assert self._run_dir is not None
+        ref = self._meta.get("reference_path")
+        if not isinstance(ref, list) or not ref:
+            return
+        points = []
+        for p in ref:
+            if not isinstance(p, dict):
+                continue
+            x = self._safe_float(p.get("x"))
+            y = self._safe_float(p.get("y"))
+            if x is None or y is None:
+                continue
+            points.append(
+                {
+                    "x": x,
+                    "y": y,
+                    "yaw": self._safe_float(p.get("yaw")),
+                }
+            )
+        if not points:
+            return
+        payload = {
+            "source": "scenario_route",
+            "num_points": int(len(points)),
+            "points": points,
+        }
+        (self._run_dir / "reference_path.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def _write_csv(self, name: str, rows: List[Dict[str, Any]]) -> None:
         assert self._run_dir is not None
@@ -428,6 +468,63 @@ class Recorder:
                     }
                 )
             row["traj_points"] = pack
+
+    def _append_tracked_lead_fields(
+        self,
+        *,
+        row: Dict[str, Any],
+        ego_state: EgoState,
+        world_model: WorldModel,
+    ) -> None:
+        # default fields (always present for downstream stability)
+        row["tracked_lead_id"] = None
+        row["tracked_lead_x"] = None
+        row["tracked_lead_y"] = None
+        row["tracked_lead_vx"] = None
+        row["tracked_lead_vy"] = None
+        row["tracked_lead_speed_mps"] = None
+        row["tracked_lead_distance_m"] = None
+        row["tracked_lead_relative_longitudinal_m"] = None
+        row["tracked_lead_relative_lateral_m"] = None
+
+        raw_id = row.get("debug_tracked_lead_id")
+        lead_id = self._safe_int(raw_id)
+        if lead_id is None:
+            return
+
+        lead = None
+        for ob in getattr(world_model, "obstacles", []):
+            if int(getattr(ob, "id", -1)) == int(lead_id):
+                lead = ob
+                break
+        if lead is None:
+            return
+
+        ex = float(ego_state.pose.x)
+        ey = float(ego_state.pose.y)
+        eyaw = float(ego_state.pose.yaw)
+        cx = math.cos(eyaw)
+        sx = math.sin(eyaw)
+
+        lx = float(lead.position.x)
+        ly = float(lead.position.y)
+        lvx = float(lead.velocity.x)
+        lvy = float(lead.velocity.y)
+
+        dx = lx - ex
+        dy = ly - ey
+        long_rel = dx * cx + dy * sx
+        lat_rel = -dx * sx + dy * cx
+
+        row["tracked_lead_id"] = int(lead_id)
+        row["tracked_lead_x"] = lx
+        row["tracked_lead_y"] = ly
+        row["tracked_lead_vx"] = lvx
+        row["tracked_lead_vy"] = lvy
+        row["tracked_lead_speed_mps"] = math.hypot(lvx, lvy)
+        row["tracked_lead_distance_m"] = math.hypot(dx, dy)
+        row["tracked_lead_relative_longitudinal_m"] = long_rel
+        row["tracked_lead_relative_lateral_m"] = lat_rel
 
     def _update_last_plan_points(self, traj: Any) -> None:
         pts = getattr(traj, "points", None) if traj is not None else None
