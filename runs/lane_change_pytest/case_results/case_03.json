@@ -1,0 +1,30 @@
+{
+  "scenario_name": "lane_change",
+  "case_id": "case_03",
+  "success": false,
+  "fail_reason": "scenario_error",
+  "collision_count": 0,
+  "timeout": false,
+  "time_to_finish": null,
+  "route_completion": 0.0,
+  "planning_time_mean": null,
+  "planning_time_p95": null,
+  "min_distance_to_lead_vehicle": null,
+  "min_distance_to_adjacent_vehicle": null,
+  "lane_change_started": false,
+  "lane_change_completed": false,
+  "overtake_completed": false,
+  "returned_to_original_lane": false,
+  "run_dir": null,
+  "config_path": "runs/lane_change_pytest/generated_configs/case_03.yaml",
+  "run_stdout": "",
+  "run_stderr": "Traceback (most recent call last):\n  File \"/home/yuxuan/Multi-Planners-System-Based-On-CARLA/scripts/run.py\", line 147, in <module>\n    main()\n  File \"/home/yuxuan/Multi-Planners-System-Based-On-CARLA/scripts/run.py\", line 122, in main\n    scenario = ScenarioCls(scenario_cfg)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/yuxuan/Multi-Planners-System-Based-On-CARLA/framework/scenarios/lane_change.py\", line 83, in __init__\n    self.cfg = ScenarioConfig(\n               ^^^^^^^^^^^^^^^\nTypeError: ScenarioConfig.__init__() got an unexpected keyword argument 'ego_initial_speed_mps'\n",
+  "input_case": {
+    "case_id": "case_03",
+    "ego_spawn_point_index": 145,
+    "goal_spawn_point_index": 120,
+    "lead_distance_m": 16.0,
+    "lead_target_speed_mps": 3.0,
+    "expected_success": true
+  }
+}

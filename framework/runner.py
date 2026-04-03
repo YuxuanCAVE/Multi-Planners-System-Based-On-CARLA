@@ -314,6 +314,21 @@ class Runner:
         assert self.world is not None
         scenario_name = getattr(self.scenario, "name", "scenario")
         planner_name = getattr(self.planner, "name", self.planner.__class__.__name__)
+        reference_path = None
+        try:
+            route = self.scenario.get_route()
+            pts = getattr(route, "points", None)
+            if pts:
+                reference_path = [
+                    {
+                        "x": float(p.x),
+                        "y": float(p.y),
+                        "yaw": float(getattr(p, "yaw", 0.0)),
+                    }
+                    for p in pts
+                ]
+        except Exception:
+            reference_path = None
         self.recorder.start(
             meta={
                 "scenario": scenario_name,
@@ -325,6 +340,7 @@ class Runner:
                 "runner_cfg": vars(self.cfg),
                 "config": self.full_config,
                 "sensor_cfg": self.full_config.get("sensors", None),
+                "reference_path": reference_path,
             }
         
         )

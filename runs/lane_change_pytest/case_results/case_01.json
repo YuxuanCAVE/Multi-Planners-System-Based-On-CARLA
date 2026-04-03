@@ -1,0 +1,30 @@
+{
+  "scenario_name": "lane_change_overtake",
+  "case_id": "case_01",
+  "success": true,
+  "fail_reason": null,
+  "collision_count": 0,
+  "timeout": false,
+  "time_to_finish": 17.150000000000002,
+  "route_completion": 1.0,
+  "planning_time_mean": 141.63023756399588,
+  "planning_time_p95": 209.7861920010473,
+  "min_distance_to_lead_vehicle": 0.29865563581132415,
+  "min_distance_to_adjacent_vehicle": null,
+  "lane_change_started": true,
+  "lane_change_completed": true,
+  "overtake_completed": true,
+  "returned_to_original_lane": false,
+  "run_dir": "runs/lane_change_pytest/raw_runs/case_01",
+  "config_path": "runs/lane_change_pytest/generated_configs/case_01.yaml",
+  "run_stdout": "Run finished: {'reason': 'reached_goal', 'steps': 343, 'sim_time_s': 17.150000000000002, 'wall_time_s': 52.50726938247681, 'dist_to_goal': 3.9721778562523435, 'metrics_summary': {'num_samples': 344, 'cte_rmse_m': 0.27016695254356127, 'cte_max_abs_m': 1.3413046973607181, 'heading_rmse_rad': 0.17551049302393015, 'heading_max_abs_rad': 0.6956521739130433, 'speed_err_rmse_mps': 1.9724199551709776, 'd_steer_rmse': 0.1067715638026034, 'steer_saturation_count': 5, 'throttle_saturation_count': 0, 'brake_saturation_count': 0, 'cte_mean_m': -0.0016651862327552633}}\n",
+  "run_stderr": "",
+  "input_case": {
+    "case_id": "case_01",
+    "ego_spawn_point_index": 145,
+    "goal_spawn_point_index": 120,
+    "lead_distance_m": 20.0,
+    "lead_target_speed_mps": 1.0,
+    "expected_success": true
+  }
+}

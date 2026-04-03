@@ -1,9 +1,8 @@
-from __future__ import annotations
-
 import math
-import random
+
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
+
 
 import carla
 
@@ -26,23 +25,55 @@ def _yaw_rad_from_deg(yaw_deg: float) -> float:
 
 @dataclass
 class ScenarioConfig:
+    # world
     map_name: str = "Town10HD"
     weather: str = "ClearNoon"
 
+    # ego
     ego_blueprint: str = "vehicle.tesla.model3"
-    ego_spawn: Dict[str, Any] = None
+    ego_spawn: Dict[str, Any] = None  # {"spawn_point_index": 0} OR {"transform": {...}}
 
-    goal: Dict[str, Any] = None
+    # goal
+    goal: Dict[str, Any] = None  # {"spawn_point_index": 20} OR {"transform": {...}}
     goal_radius_m: float = 4.0
     timeout_s: float = 200.0
 
-    route: Dict[str, Any] = None
-    actors: list[Dict[str, Any]] = None
-    ego_initial_speed_mps: float = 0.0
-    random_seed: int = 0
+    # route
+    route: Dict[str, Any] = None  # {"source": "grp", "sampling_resolution_m": 2.0}
+
+    # actors (optional)
+    actors: list[Dict[str, Any]] = None  # list of {type, blueprint, spawn, autopilot, ...}
 
 
 class ConfigurableRouteScenario(BaseScenario):
+    """
+    A YAML-configurable scenario based on BaseScenario.
+
+    Supports:
+    - map selection
+    - ego spawn by spawn_point_index or transform
+    - goal by spawn_point_index or transform
+    - route generation via CARLA GlobalRoutePlanner (GRP)
+    - optional extra actors (vehicles/walkers) spawned from config
+    - termination: reached_goal OR timeout (collision handled by Runner)
+
+    Example YAML (single file):
+      scenario:
+        type: configurable_route
+        map_name: Town10HD
+        weather: ClearNoon
+        ego_spawn: {spawn_point_index: 0}
+        goal: {spawn_point_index: 20}
+        goal_radius_m: 4.0
+        timeout_s: 200.0
+        route: {source: grp, sampling_resolution_m: 2.0}
+        actors:
+          - type: vehicle
+            blueprint: vehicle.audi.tt
+            spawn: {spawn_point_index: 10}
+            autopilot: true
+    """
+
     name = "configurable_route"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -59,31 +90,26 @@ class ConfigurableRouteScenario(BaseScenario):
             timeout_s=float(cfg.get("timeout_s", 200.0)),
             route=cfg.get("route") or {"source": "grp", "sampling_resolution_m": float(cfg.get("sampling_resolution_m", 2.0))},
             actors=list(cfg.get("actors") or []),
-            ego_initial_speed_mps=float(cfg.get("ego_initial_speed_mps", 0.0)),
-            random_seed=int(cfg.get("random_seed", 0)),
+           
         )
 
         self._route: Optional[Route] = None
         self._goal_transform: Optional[carla.Transform] = None
         self._start_transform: Optional[carla.Transform] = None
-        self._t0_sim: Optional[float] = None
-
-        self.lead_vehicle_cfg = dict(cfg.get("lead_vehicle") or {})
+        self._t0_sim: Optional[float] = None  # set on first tick or in runner meta
+        self.lead_vehicle_cfg = cfg.get("lead_vehicle", {})
         self.lead_vehicle: Optional[carla.Vehicle] = None
-        self.adjacent_vehicle_cfg = dict(cfg.get("adjacent_vehicle") or {})
-        self.adjacent_vehicle: Optional[carla.Vehicle] = None
-        self._ego_speed_initialized: bool = False
-
     # ---------------------------
     # BaseScenario API
     # ---------------------------
     def setup(self, client: carla.Client) -> carla.World:
-        random.seed(self.cfg.random_seed)
         world = client.load_world(self.cfg.map_name)
         self.world = world
 
+        # weather
         world.set_weather(self._resolve_weather(self.cfg.weather))
 
+        # spawn ego
         carla_map = world.get_map()
         spawns = carla_map.get_spawn_points()
         if not spawns:
@@ -96,12 +122,14 @@ class ConfigurableRouteScenario(BaseScenario):
         ego_bp = bp_lib.find(self.cfg.ego_blueprint)
         ego = world.try_spawn_actor(ego_bp, self._start_transform)
         if ego is None:
+            # retry a few spawn points if failed
             ego = self._retry_spawn_vehicle(world, ego_bp, spawns, preferred=self.cfg.ego_spawn, tries=10)
         if ego is None:
             raise RuntimeError("Failed to spawn ego vehicle.")
-
-        self.ego_vehicle = ego
-        #self._start_transform = ego.get_transform()
+        
+        self.ego_vehicle = ego  # BaseScenario expects this
+        if self.lead_vehicle_cfg.get("enable", False):
+            self._spawn_lead_vehicle_from_cfg(world)
 
         s_cfg = dict((self.config or {}).get("sensors") or {})
         camera_cfg = dict(s_cfg.get("camera") or {})
@@ -119,22 +147,17 @@ class ConfigurableRouteScenario(BaseScenario):
             enable_radar=enable_radar,
         )
 
+
+        # optional extra actors
         self._spawn_configured_actors(world, spawns, self.cfg.actors)
 
+        # build route
         self._route = self._build_route(world, self._start_transform, self._goal_transform, self.cfg.route)
 
+        # reset done info
         self._done_info = {}
         self._t0_sim = None
-        self._ego_speed_initialized = False
-
-        if self.lead_vehicle_cfg.get("enable", False):
-            self._spawn_lead_vehicle_ahead(world)
-        if self.adjacent_vehicle_cfg.get("enable", False):
-            self._spawn_adjacent_rear_vehicle(world)
-
-
         return world
-    
 
     def get_route(self) -> Route:
         if self._route is None:
@@ -142,30 +165,11 @@ class ConfigurableRouteScenario(BaseScenario):
         return self._route
 
     def tick(self, t_sim: float) -> None:
+        # store episode start time reference (for timeout)
         if self._t0_sim is None:
             self._t0_sim = float(t_sim)
 
-        if (
-            not self._ego_speed_initialized
-            and self.ego_vehicle is not None
-            and self.cfg.ego_initial_speed_mps > 0.0
-        ):
-            try:
-                tf = self.ego_vehicle.get_transform()
-                yaw = math.radians(float(tf.rotation.yaw))
-                v = float(self.cfg.ego_initial_speed_mps)
-                self.ego_vehicle.set_target_velocity(
-                    carla.Vector3D(
-                        x=v * math.cos(yaw),
-                        y=v * math.sin(yaw),
-                        z=0.0,
-                    )
-                )
-            except Exception:
-                pass
-            self._ego_speed_initialized = True
-
-        if self.lead_vehicle is not None:
+        if self.lead_vehicle is not None and "target_speed_mps" in self.lead_vehicle_cfg:
             try:
                 tf = self.lead_vehicle.get_transform()
                 yaw = math.radians(float(tf.rotation.yaw))
@@ -180,25 +184,14 @@ class ConfigurableRouteScenario(BaseScenario):
             except Exception:
                 pass
 
-        if self.adjacent_vehicle is not None:
-            try:
-                tf = self.adjacent_vehicle.get_transform()
-                yaw = math.radians(float(tf.rotation.yaw))
-                v = float(self.adjacent_vehicle_cfg.get("target_speed_mps", 2.0))
-                self.adjacent_vehicle.set_target_velocity(
-                    carla.Vector3D(
-                        x=v * math.cos(yaw),
-                        y=v * math.sin(yaw),
-                        z=0.0,
-                    )
-                )
-            except Exception:
-                pass
+        # (optional) scripted events can be implemented here later
+        return
 
     def is_done(self) -> Tuple[bool, Dict[str, Any]]:
         if self.world is None or self.ego_vehicle is None or self._goal_transform is None:
             return True, {"reason": "scenario_not_ready"}
 
+        # goal reached
         ego_loc = self.ego_vehicle.get_transform().location
         goal_loc = self._goal_transform.location
         dx = ego_loc.x - goal_loc.x
@@ -208,51 +201,56 @@ class ConfigurableRouteScenario(BaseScenario):
         if dist <= self.cfg.goal_radius_m:
             return True, {"reason": "reached_goal", "dist_to_goal": float(dist)}
 
+        # timeout (if we have t0)
         if self._t0_sim is not None:
+            # Runner passes sim time to tick; we don't store current sim time here
+            # so we approximate via world snapshot timestamp if available.
             snap = self.world.get_snapshot()
             now = float(snap.timestamp.elapsed_seconds) if snap is not None else None
-            if now is not None and now >= self.cfg.timeout_s:
-                return True, {"reason": "timeout", "elapsed_s": float(now), "dist_to_goal": float(dist)}
+            # If snapshot not reliable, you can instead pass t_sim into is_done in Runner
+            if now is not None and (now - (now - 0.0)) is not None:
+                # fallback: use snapshot elapsed_seconds directly against timeout,
+                # not perfect but works if episodes start near 0.
+                if now >= self.cfg.timeout_s:
+                    return True, {"reason": "timeout", "elapsed_s": float(now), "dist_to_goal": float(dist)}
 
         return False, {"reason": "running", "dist_to_goal": float(dist)}
 
     def destroy(self) -> None:
+        # BaseScenario already destroys sensors/actors/ego safely
         super().destroy()
         self._route = None
         self._goal_transform = None
         self._start_transform = None
         self._t0_sim = None
         self.lead_vehicle = None
-        self.adjacent_vehicle = None
+        
 
     # ---------------------------
     # Helpers
     # ---------------------------
     def _resolve_weather(self, name: str) -> carla.WeatherParameters:
+        # Map common names to CARLA presets; default to ClearNoon
         preset = getattr(carla.WeatherParameters, name, None)
         if preset is None:
             preset = carla.WeatherParameters.ClearNoon
         return preset
 
-    def _resolve_spawn(
-        self,
-        spawns: list[carla.Transform],
-        spec: Dict[str, Any],
-        *,
-        z_lift: float = 0.0,
-    ) -> carla.Transform:
+    def _resolve_spawn(self, spawns: list[carla.Transform], spec: Dict[str, Any], *, z_lift: float = 0.0) -> carla.Transform:
+        """
+        spec:
+          - {"spawn_point_index": int}
+          - {"transform": {"x":..,"y":..,"z":..,"yaw":..,"pitch":..,"roll":..}}
+        """
         if "spawn_point_index" in spec:
             idx = int(spec["spawn_point_index"])
             idx = max(0, min(idx, len(spawns) - 1))
             tf = spawns[idx]
-            return carla.Transform(
-                carla.Location(
-                    x=tf.location.x,
-                    y=tf.location.y,
-                    z=tf.location.z + float(z_lift),
-                ),
+            tf = carla.Transform(
+                carla.Location(x=tf.location.x, y=tf.location.y, z=tf.location.z + float(z_lift)),
                 tf.rotation,
             )
+            return tf
 
         if "transform" in spec:
             t = spec["transform"]
@@ -268,6 +266,7 @@ class ConfigurableRouteScenario(BaseScenario):
             )
             return carla.Transform(loc, rot)
 
+        # fallback
         return spawns[0]
 
     def _retry_spawn_vehicle(
@@ -279,6 +278,7 @@ class ConfigurableRouteScenario(BaseScenario):
         preferred: Dict[str, Any],
         tries: int = 10,
     ) -> Optional[carla.Vehicle]:
+        # try preferred index first, then scan
         start_idx = 0
         if "spawn_point_index" in preferred:
             start_idx = int(preferred["spawn_point_index"]) % len(spawns)
@@ -294,12 +294,7 @@ class ConfigurableRouteScenario(BaseScenario):
                 return a
         return None
 
-    def _spawn_configured_actors(
-        self,
-        world: carla.World,
-        spawns: list[carla.Transform],
-        actors_cfg: list[Dict[str, Any]],
-    ) -> None:
+    def _spawn_configured_actors(self, world: carla.World, spawns: list[carla.Transform], actors_cfg: list[Dict[str, Any]]) -> None:
         if not actors_cfg:
             return
 
@@ -318,11 +313,13 @@ class ConfigurableRouteScenario(BaseScenario):
                     continue
                 self.actors.append(actor)
 
+                # autopilot (TrafficManager)
                 if bool(spec.get("autopilot", False)):
                     actor.set_autopilot(True)
 
             elif a_type == "walker":
-                bp = bp_lib.find(blueprint)
+                # basic walker spawn (no AI controller here; can extend later)
+                bp = bp_lib.find(blueprint)  # e.g., "walker.pedestrian.0001"
                 tf = self._resolve_spawn(spawns, spawn_spec, z_lift=0.0)
                 actor = world.try_spawn_actor(bp, tf)
                 if actor is None:
@@ -330,6 +327,7 @@ class ConfigurableRouteScenario(BaseScenario):
                 self.actors.append(actor)
 
             elif a_type == "prop":
+                # props depend on available blueprints in your CARLA build; keep as placeholder
                 bp = bp_lib.find(blueprint)
                 tf = self._resolve_spawn(spawns, spawn_spec, z_lift=0.0)
                 actor = world.try_spawn_actor(bp, tf)
@@ -383,158 +381,78 @@ class ConfigurableRouteScenario(BaseScenario):
             "route": self.cfg.route,
             "actors": self.cfg.actors,
         }
-
-
-    def _advance_same_lane(
-        self,
-        wp: carla.Waypoint,
-        dist_m: float,
-        *,
-        step_m: float = 2.0,
-    ) -> Optional[carla.Waypoint]:
-        cur = wp
-        traveled = 0.0
-
-        while traveled < dist_m:
-            nxts = cur.next(step_m)
-            if not nxts:
-                return None
-
-            nxt = None
-            for cand in nxts:
-                if cand.road_id == cur.road_id and cand.lane_id == cur.lane_id:
-                    nxt = cand
-                    break
-
-            if nxt is None:
-                return None
-
-            cur = nxt
-            traveled += step_m
-
-        return cur
-
-    def _spawn_lead_vehicle_ahead(self, world: carla.World) -> None:
-        if self.ego_vehicle is None:
+        
+    def _spawn_lead_vehicle(self, world: carla.World) -> None:
+        if self._start_transform is None:
             return
 
-        cfg = self.lead_vehicle_cfg
-        blueprint_id = str(cfg.get("blueprint", "vehicle.audi.tt"))
-        distance_m = float(cfg.get("distance_m", 20.0))
-        step_m = float(cfg.get("step_m", 2.0))
-        lateral_offset_m = float(cfg.get("lateral_offset_m", 0.0))
-        z_lift = float(cfg.get("z_lift", 0.5))
-
         carla_map = world.get_map()
-        bp_lib = world.get_blueprint_library()
 
-        ego_tf = self.ego_vehicle.get_transform()
+        # ego 所在 waypoint
         ego_wp = carla_map.get_waypoint(
-            ego_tf.location,
+            self._start_transform.location,
             project_to_road=True,
             lane_type=carla.LaneType.Driving,
         )
-        if ego_wp is None:
+
+        # 往前找 20 米
+        forward_wps = ego_wp.next(20.0)
+        if not forward_wps:
             return
 
-        distance_candidates = [
-            distance_m,
-            distance_m + 5.0,
-            distance_m + 10.0,
-            max(8.0, distance_m - 5.0),
-        ]
+        lead_wp = forward_wps[0]
+        spawn_tf = lead_wp.transform
+        spawn_tf.location.z += 0.3  # 防止嵌地
 
-        bp = bp_lib.find(blueprint_id)
-        actor = None
+        bp_lib = world.get_blueprint_library()
+        vehicle_bp = bp_lib.find("vehicle.audi.tt")
 
-        for dist in distance_candidates:
-            lead_wp = self._advance_same_lane(ego_wp, dist, step_m=step_m)
-            if lead_wp is None:
-                continue
+        lead_vehicle = world.try_spawn_actor(vehicle_bp, spawn_tf)
+        if lead_vehicle is None:
+            return
 
-            tf0 = lead_wp.transform
-            yaw_rad = math.radians(float(tf0.rotation.yaw))
+        self.actors.append(lead_vehicle)
 
-            left_x = -math.sin(yaw_rad)
-            left_y = math.cos(yaw_rad)
+        # ❗关键：设置低速
+        lead_vehicle.set_autopilot(True)
 
-            base_x = tf0.location.x + lateral_offset_m * left_x
-            base_y = tf0.location.y + lateral_offset_m * left_y
-            base_z = tf0.location.z
+        # 控制速度（TrafficManager）
+        tm = world.get_trafficmanager()
+        tm.vehicle_percentage_speed_difference(lead_vehicle, 70.0)  
+        # 70% slower → 很慢
 
-            offsets_s = [0.0, 1.0, -1.0, 2.0, -2.0]
-            z_lifts = [z_lift, z_lift + 0.3, z_lift + 0.6]
+    def _spawn_lead_vehicle_from_cfg(self, world: carla.World):
+        cfg = self.lead_vehicle_cfg
+        dist = float(cfg.get("distance_m", 20.0))
+        speed_diff = float(cfg.get("speed_diff", 70.0))
+        blueprint = str(cfg.get("blueprint", "vehicle.audi.tt"))
 
-            for s in offsets_s:
-                for dz in z_lifts:
-                    x = base_x + s * math.cos(yaw_rad)
-                    y = base_y + s * math.sin(yaw_rad)
-                    z = base_z + dz
+        carla_map = world.get_map()
+        ego_wp = carla_map.get_waypoint(
+            self._start_transform.location,
+            project_to_road=True,
+            lane_type=carla.LaneType.Driving,
+        )
 
-                    tf = carla.Transform(
-                        carla.Location(x=x, y=y, z=z),
-                        tf0.rotation,
-                    )
+        next_wps = ego_wp.next(dist)
+        if not next_wps:
+            return
 
-                    actor = world.try_spawn_actor(bp, tf)
-                    if actor is not None:
-                        break
-                if actor is not None:
-                    break
+        wp = next_wps[0]
+        tf = wp.transform
+        tf.location.z += 0.3
 
-            if actor is not None:
-                break
-
+        bp = world.get_blueprint_library().find(blueprint)
+        actor = world.try_spawn_actor(bp, tf)
         if actor is None:
             return
 
         self.actors.append(actor)
         self.lead_vehicle = actor
 
-    def _spawn_adjacent_rear_vehicle(self, world: carla.World) -> None:
-        if self.ego_vehicle is None:
-            return
-        cfg = self.adjacent_vehicle_cfg
-        side = str(cfg.get("side", "left")).lower()
-        blueprint_id = str(cfg.get("blueprint", "vehicle.audi.tt"))
-        rear_distance_m = float(cfg.get("rear_distance_m", 18.0))
-        step_m = float(cfg.get("step_m", 2.0))
-        z_lift = float(cfg.get("z_lift", 0.5))
-
-        carla_map = world.get_map()
-        bp_lib = world.get_blueprint_library()
-
-        ego_tf = self.ego_vehicle.get_transform()
-        ego_wp = carla_map.get_waypoint(
-            ego_tf.location,
-            project_to_road=True,
-            lane_type=carla.LaneType.Driving,
-        )
-        if ego_wp is None:
-            return
-
-        adj_wp = ego_wp.get_left_lane() if side == "left" else ego_wp.get_right_lane()
-        if adj_wp is None or adj_wp.lane_type != carla.LaneType.Driving:
-            return
-
-        cur = adj_wp
-        traveled = 0.0
-        while traveled < rear_distance_m:
-            prevs = cur.previous(step_m)
-            if not prevs:
-                break
-            cur = prevs[0]
-            traveled += step_m
-
-        bp = bp_lib.find(blueprint_id)
-        tf = cur.transform
-        spawn_tf = carla.Transform(
-            carla.Location(x=tf.location.x, y=tf.location.y, z=tf.location.z + z_lift),
-            tf.rotation,
-        )
-        actor = world.try_spawn_actor(bp, spawn_tf)
-        if actor is None:
-            return
-
-        self.actors.append(actor)
-        self.adjacent_vehicle = actor
+        if "target_speed_mps" in cfg:
+            actor.set_autopilot(False)
+        else:
+            actor.set_autopilot(True)
+            tm = world.get_trafficmanager()
+            tm.vehicle_percentage_speed_difference(actor, speed_diff)
